@@ -48,17 +48,19 @@ llvm::StringMap<
     std::function<bool(llvm::CallBase *, llvm::SmallVector<AllocaInst *> *)>>
     DOPGuard::funcSymbolDispatchMap = {
         {"memcpy",
-         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *) {
+         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *vec) {
            Value *op = i->getOperand(0);
-           if (dyn_cast<AllocaInst *>(op)) {
+           if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
+             vec->push_back(al);
              return true;
            }
            return false;
          }},
         {"read",
-         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *) {
+         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *vec) {
            Value *op = i->getOperand(1);
-           if (dyn_cast<AllocaInst *>(op)) {
+           if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
+             vec->push_back(al);
              return true;
            }
            return false;
