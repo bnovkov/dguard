@@ -46,21 +46,32 @@ using namespace llvm;
 StaticCallCounter::Result StaticCallCounter::runOnModule(Module &M) {
     for(auto &Func : M){
         for(auto &BB : Func){
-            llvm:ArrayRef<auto> PtrVariables = new llvm:ArrayRef<>();
-            llvm:ArrayRef<auto> AllocaInst = new llvm:ArrayRef<>();
+            llvm::SmallVector<PointerType*> *ptrVars = new llvm::SmallVector<PointerType*>();
+            llvm::SmallVector<AllocaInst*> *allocas = new llvm::SmallVector<AllocaInst*>();
             for(auto &Inst : BB){
-
                 //https://stackoverflow.com/questions/48333206/how-to-check-if-a-target-of-an-llvm-allocainst-is-a-function-pointer
                 auto *DecOp = dyn_cast<PointerType>(Inst);
-                auto *WriteOp = dyn_cast<>(Inst);
+
                 if(DecOp && !isFunctionPointerType(DecOp->getElementType())){
+                    ptrVars.append(DecOp);
                     //TODO ako je ispravan nacin trazenja pointera dodaj u PtrVariables
+                }
+                if(AllocaInst* WriteOp = dyn_cast<AllocaInst*>(Inst)){
+                    allocas.append(WriteOp);
                 }
 
             }
+            for(AllocaInst *Inst : allocas){
+                PointerType *p = Inst->getType();
+                for(PointerType* ptr : ptrVars){
+                  if(p->getName().compare(ptr->getName())){
+                    //dalje
+                  }
+                }
+            }
         }
     }
-  
+
 }
 
 PreservedAnalyses DOPGuard::run(llvm::Module &M,
