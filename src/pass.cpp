@@ -7,14 +7,15 @@
 //    a call to printf (from the C standard I/O library). The injected IR code
 //    corresponds to the following function call in ANSI C:
 //    ```C
-//      printf("(llvm-tutor) Hello from: %s\n(llvm-tutor)   number of arguments: %d\n",
+//      printf("(llvm-tutor) Hello from: %s\n(llvm-tutor)   number of arguments:
+//      %d\n",
 //             FuncName, FuncNumArgs);
 //    ```
 //    This code is inserted at the beginning of each function, i.e. before any
 //    other instruction is executed.
 //
-//    To illustrate, for `void foo(int a, int b, int c)`, the code added by InjectFuncCall
-//    will generated the following output at runtime:
+//    To illustrate, for `void foo(int a, int b, int c)`, the code added by
+//    InjectFuncCall will generated the following output at runtime:
 //    ```
 //    (llvm-tutor) Hello World from: foo
 //    (llvm-tutor)   number of arguments: 3
@@ -33,36 +34,71 @@
 #include "pass.h"
 
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/Passes/PassPlugin.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
+#include <llvm/ADT/StringRef.h>
 
 using namespace llvm;
 
-#define DEBUG_TYPE "kipc-pass"
+#define DEBUG_TYPE "dopg-pass"
 
-//-----------------------------------------------------------------------------
-// InjectFuncCall implementation
-//-----------------------------------------------------------------------------
+llvm::StringMap<
+    std::function<bool(llvm::CallBase *, llvm::SmallVector<AllocaInst *> *)>>
+    DOPGuard::funcSymbolDispatchMap = {
+        {"memcpy",
+         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *) {
+           Value *op = i->getOperand(0);
+           if (dyn_cast<AllocaInst *>(op)) {
+             return true;
+           }
+           return false;
+         }},
+        {"read",
+         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *) {
+           Value *op = i->getOperand(1);
+           if (dyn_cast<AllocaInst *>(op)) {
+             return true;
+           }
+           return false;
+         }},
+};
+
 bool DOPGuard::runOnModule(Module &M) {
-    for(auto &Func : M){
-        for(auto &BB : Func){
-          llvm::SmallVector<PointerType> *ptrVars = new llvm::SmallVector<PointerType>();
-          llvm::SmallVector<Instruction> *allocas = new llvm::SmallVector<Instruction>();
+  bool changed = false;
 
-          for (auto &inst : BB) {
-            if(AllocaInst *al = dyn_cast<AllocaInst *>(inst)){
-              
-            }
+  for (auto &Func : M) {
+    llvm::SmallVector<PointerType> *ptrVars =
+        new llvm::SmallVector<PointerType>();
+    llvm::SmallVector<AllocaInst *> *allocas =
+        new llvm::SmallVector<AllocaInst *>();
+    llvm::SmallVector<AllocaInst *> *vulnAllocas =
+        new llvm::SmallVector<AllocaInst *>();
+
+    for (auto &BB : Func) {
+      for (BasicBlock::iterator inst = BB.begin(), IE = BB.end(); inst != IE;
+           ++inst) {
+        if (CallBase *cb = dyn_cast<CallBase>(inst)) {
+          StringRef name = cb->getName();
+          if (DOPGuard::funcSymbolDispatchMap.count(name)) {
+            funcSymbolDispatchMap[name](cb, vulnAllocas);
           }
         }
+      }
     }
-  
+
+    if (vulnAllocas) {
+      continue;
+    }
+  }
+
+  return changed;
 }
 
 PreservedAnalyses DOPGuard::run(llvm::Module &M,
-                                       llvm::ModuleAnalysisManager &) {
-  bool Changed =  runOnModule(M);
+                                llvm::ModuleAnalysisManager &) {
+  bool Changed = runOnModule(M);
 
   return (Changed ? llvm::PreservedAnalyses::none()
                   : llvm::PreservedAnalyses::all());
@@ -103,6 +139,6 @@ llvmGetPassPluginInfo() {
 char LegacyDOPGuard::ID = 0;
 
 // Register the pass - required for (among others) opt
-static RegisterPass<LegacyDOPGuard>
-    X(/*PassArg=*/"legacy-dopg-pass", /*Name=*/"LegacyDOPGuard",
-      /*CFGOnly=*/false, /*is_analysis=*/false);
+static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
+                                      /*Name=*/"LegacyDOPGuard",
+                                      /*CFGOnly=*/false, /*is_analysis=*/false);
