@@ -45,25 +45,21 @@ using namespace llvm;
 #define DEBUG_TYPE "dopg-pass"
 
 llvm::StringMap<
-    std::function<bool(llvm::CallBase *, llvm::SmallVector<AllocaInst *> *)>>
+    std::function<void(llvm::CallBase *, llvm::SmallVector<AllocaInst *> *)>>
     DOPGuard::funcSymbolDispatchMap = {
         {"memcpy",
          [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *vec) {
            Value *op = i->getOperand(0);
            if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
              vec->push_back(al);
-             return true;
            }
-           return false;
          }},
         {"read",
          [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *vec) {
            Value *op = i->getOperand(1);
            if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
              vec->push_back(al);
-             return true;
            }
-           return false;
          }},
 };
 
@@ -90,7 +86,7 @@ bool DOPGuard::runOnModule(Module &M) {
       }
     }
 
-    if (vulnAllocas) {
+    if (vulnAllocas->size() == 0) {
       continue;
     }
   }
