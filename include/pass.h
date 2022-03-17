@@ -31,7 +31,7 @@ private:
   static llvm::StringMap<std::function<void(llvm::CallBase *, AllocaVec *)>>
       funcSymbolDispatchMap;
 
-  void promoteToThreadLocal(llvm::Module &m, llvm::AllocaInst *al);
+  void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas);
   bool findInstruction(llvm::Instruction *Inst);
   bool findBranch(llvm::CmpInst *Inst);
 };

@@ -35,15 +35,16 @@ llvm::StringMap<std::function<void(llvm::CallBase *, DOPGuard::AllocaVec *)>>
          }},
 };
 
-void DOPGuard::promoteToThreadLocal(llvm::Module &m, llvm::AllocaInst *al) {
-  BasicBlock::iterator ii(al);
-  GlobalVariable *alloca_global = new GlobalVariable(
-      m, al->getAllocatedType(), false,
-      GlobalValue::InternalLinkage, // TODO: change to static
-      nullptr, "", nullptr, GlobalValue::ThreadLocalMode::LocalExecTLSModel);
-
-  ReplaceInstWithValue(al->getParent()->getInstList(), ii,
-                       dyn_cast<Value>(alloca_global));
+void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
+  for (llvm::AllocaInst *al : *allocas) {
+    BasicBlock::iterator ii(al);
+    GlobalVariable *alloca_global = new GlobalVariable(
+        m, al->getAllocatedType(), false,
+        GlobalValue::InternalLinkage, // TODO: change to static
+        nullptr, "", nullptr, GlobalValue::ThreadLocalMode::LocalExecTLSModel);
+    ReplaceInstWithValue(al->getParent()->getInstList(), ii,
+                         dyn_cast<Value>(alloca_global));
+  }
 }
 bool DOPGuard::findBranch(llvm::CmpInst *Inst) {
   for (User *U : Inst->users()) {
@@ -78,7 +79,7 @@ bool DOPGuard::runOnModule(Module &M) {
 
   for (auto &Func : M) {
     llvm::SmallVector<PointerType, 10> ptrVars;
-    AllocaVec allocas;
+    AllocaVec allocasToBePromoted;
     AllocaVec vulnAllocas;
 
     for (auto &BB : Func) {
@@ -90,22 +91,31 @@ bool DOPGuard::runOnModule(Module &M) {
             funcSymbolDispatchMap[name](cb, &vulnAllocas);
           }
         }
-        if (AllocaInst *cb = dyn_cast<AllocaInst>(inst)) {
-          Instruction *Inst = dyn_cast<Instruction>(inst);
-
-          if (DOPGuard::findInstruction(Inst)) {
-
-            allocas.push_back(cb);
-          }
-        }
       }
     }
 
     if (vulnAllocas.size() == 0) {
       continue;
     }
-  }
 
+    for (auto &BB : Func) {
+      for (BasicBlock::iterator inst = BB.begin(), IE = BB.end(); inst != IE;
+           ++inst) {
+
+        if (AllocaInst *cb = dyn_cast<AllocaInst>(inst)) {
+          Instruction *Inst = dyn_cast<Instruction>(inst);
+
+          if (DOPGuard::findInstruction(Inst)) {
+            allocasToBePromoted.push_back(cb);
+          }
+        }
+      }
+    }
+    if (allocasToBePromoted.size() != 0) {
+      promoteToThreadLocal(M, &allocasToBePromoted);
+      changed = true;
+    }
+  }
   return changed;
 }
 
