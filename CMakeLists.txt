@@ -32,6 +32,9 @@ endif()
 # https://stackoverflow.com/questions/22140520/how-to-enable-assert-in-cmake-release-mode
 string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror -Wall -Wextra -Wpedantic")
+
+
 if (${BUILD_AGAINST_PRECOMPILED_LLVM})
   set (search_paths
     ${PATH_TO_LLVM}

@@ -45,32 +45,34 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, llvm::AllocaInst *al) {
   ReplaceInstWithValue(al->getParent()->getInstList(), ii,
                        dyn_cast<Value>(alloca_global));
 }
-bool DOPGuard::findBranch(llvm::CmpInst* Inst){
-  for(User *U : Inst->users()){
-    if (BranchInst *cb2 = dyn_cast<BranchInst>(U)) {
-      
+bool DOPGuard::findBranch(llvm::CmpInst *Inst) {
+  for (User *U : Inst->users()) {
+    if (dyn_cast<BranchInst>(U) != nullptr) {
       return true;
-    }
-    else{
+    } else {
       Instruction *cb3 = dyn_cast<Instruction>(U);
       return DOPGuard::findInstruction(cb3);
-    }                                    
+    }
   }
+  return false;
 }
-bool DOPGuard::findInstruction(llvm::Instruction* Inst){
-  LLVM_DEBUG(dbgs() << "+++++++++\n" << "\n");
-  for(User *U : Inst->users()){
+
+bool DOPGuard::findInstruction(llvm::Instruction *Inst) {
+  LLVM_DEBUG(dbgs() << "+++++++++\n"
+                    << "\n");
+  for (User *U : Inst->users()) {
     LLVM_DEBUG(dbgs() << "\t" << *U << "\n");
     if (CmpInst *cb2 = dyn_cast<CmpInst>(U)) {
-      
+
       return DOPGuard::findBranch(cb2);
-    }
-    else{
+    } else {
       Instruction *cb3 = dyn_cast<Instruction>(U);
       return DOPGuard::findInstruction(cb3);
-    }                                    
+    }
   }
+  return false;
 }
+
 bool DOPGuard::runOnModule(Module &M) {
   bool changed = false;
 
@@ -89,13 +91,12 @@ bool DOPGuard::runOnModule(Module &M) {
           }
         }
         if (AllocaInst *cb = dyn_cast<AllocaInst>(inst)) {
-          Instruction* Inst = dyn_cast<Instruction>(inst);
-          
+          Instruction *Inst = dyn_cast<Instruction>(inst);
 
-          if(DOPGuard::findInstruction(Inst)){
+          if (DOPGuard::findInstruction(Inst)) {
 
             allocas.push_back(cb);
-          }                     
+          }
         }
       }
     }
