@@ -1,61 +1,33 @@
-//========================================================================
-// FILE:
-//    InjectFuncCall.cpp
-//
-// DESCRIPTION:
-//    For each function defined in the input IR module, InjectFuncCall inserts
-//    a call to printf (from the C standard I/O library). The injected IR code
-//    corresponds to the following function call in ANSI C:
-//    ```C
-//      printf("(llvm-tutor) Hello from: %s\n(llvm-tutor)   number of arguments:
-//      %d\n",
-//             FuncName, FuncNumArgs);
-//    ```
-//    This code is inserted at the beginning of each function, i.e. before any
-//    other instruction is executed.
-//
-//    To illustrate, for `void foo(int a, int b, int c)`, the code added by
-//    InjectFuncCall will generated the following output at runtime:
-//    ```
-//    (llvm-tutor) Hello World from: foo
-//    (llvm-tutor)   number of arguments: 3
-//    ```
-//
-// USAGE:
-//    1. Legacy pass manager:
-//      $ opt -load <BUILD_DIR>/lib/libInjectFuncCall.so `\`
-//        --legacy-inject-func-call <bitcode-file>
-//    2. New pass maanger:
-//      $ opt -load-pass-plugin <BUILD_DIR>/lib/libInjectFunctCall.so `\`
-//        -passes=-"inject-func-call" <bitcode-file>
-//
-// License: MIT
-//========================================================================
+
 #include "pass.h"
 
+#include "llvm/ADT/None.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CodeGen.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <llvm/ADT/StringRef.h>
+#include <llvm/IR/GlobalValue.h>
 
 using namespace llvm;
 
 #define DEBUG_TYPE "dopg-pass"
 
-llvm::StringMap<
-    std::function<void(llvm::CallBase *, llvm::SmallVector<AllocaInst *> *)>>
+llvm::StringMap<std::function<void(llvm::CallBase *, DOPGuard::AllocaVec *)>>
     DOPGuard::funcSymbolDispatchMap = {
         {"memcpy",
-         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *vec) {
+         [](llvm::CallBase *i, DOPGuard::AllocaVec *vec) {
            Value *op = i->getOperand(0);
            if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
              vec->push_back(al);
            }
          }},
         {"read",
-         [](llvm::CallBase *i, llvm::SmallVector<AllocaInst *> *vec) {
+         [](llvm::CallBase *i, DOPGuard::AllocaVec *vec) {
            Value *op = i->getOperand(1);
            if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
              vec->push_back(al);
@@ -63,16 +35,24 @@ llvm::StringMap<
          }},
 };
 
+void DOPGuard::promoteToThreadLocal(llvm::Module &m, llvm::AllocaInst *al) {
+  BasicBlock::iterator ii(al);
+  GlobalVariable *alloca_global = new GlobalVariable(
+      m, al->getAllocatedType(), false,
+      GlobalValue::InternalLinkage, // TODO: change to static
+      nullptr, "", nullptr, GlobalValue::ThreadLocalMode::LocalExecTLSModel);
+
+  ReplaceInstWithValue(al->getParent()->getInstList(), ii,
+                       dyn_cast<Value>(alloca_global));
+}
+
 bool DOPGuard::runOnModule(Module &M) {
   bool changed = false;
 
   for (auto &Func : M) {
-    llvm::SmallVector<PointerType> *ptrVars =
-        new llvm::SmallVector<PointerType>();
-    llvm::SmallVector<AllocaInst *> *allocas =
-        new llvm::SmallVector<AllocaInst *>();
-    llvm::SmallVector<AllocaInst *> *vulnAllocas =
-        new llvm::SmallVector<AllocaInst *>();
+    llvm::SmallVector<PointerType, 10> ptrVars;
+    AllocaVec allocas;
+    AllocaVec vulnAllocas;
 
     for (auto &BB : Func) {
       for (BasicBlock::iterator inst = BB.begin(), IE = BB.end(); inst != IE;
@@ -80,13 +60,13 @@ bool DOPGuard::runOnModule(Module &M) {
         if (CallBase *cb = dyn_cast<CallBase>(inst)) {
           StringRef name = cb->getName();
           if (DOPGuard::funcSymbolDispatchMap.count(name)) {
-            funcSymbolDispatchMap[name](cb, vulnAllocas);
+            funcSymbolDispatchMap[name](cb, &vulnAllocas);
           }
         }
       }
     }
 
-    if (vulnAllocas->size() == 0) {
+    if (vulnAllocas.size() == 0) {
       continue;
     }
   }
@@ -96,16 +76,13 @@ bool DOPGuard::runOnModule(Module &M) {
 
 PreservedAnalyses DOPGuard::run(llvm::Module &M,
                                 llvm::ModuleAnalysisManager &) {
-  bool Changed = runOnModule(M);
 
-  return (Changed ? llvm::PreservedAnalyses::none()
-                  : llvm::PreservedAnalyses::all());
+  return (runOnModule(M) ? llvm::PreservedAnalyses::none()
+                         : llvm::PreservedAnalyses::all());
 }
 
 bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
-  bool Changed = Impl.runOnModule(M);
-
-  return Changed;
+  return Impl.runOnModule(M);
 }
 
 //-----------------------------------------------------------------------------
