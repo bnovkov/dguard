@@ -32,6 +32,8 @@ private:
       funcSymbolDispatchMap;
 
   void promoteToThreadLocal(llvm::Module &m, llvm::AllocaInst *al);
+  bool findInstruction(llvm::Instruction* Inst);
+  bool findBransh(llvm::CmpInst* Inst);
 };
 //------------------------------------------------------------------------------
 // Legacy PM interface
