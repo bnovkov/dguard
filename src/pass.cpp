@@ -2,6 +2,7 @@
 #include "pass.h"
 
 #include "llvm/ADT/None.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
@@ -17,20 +18,27 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dopg-pass"
 
+// TODO: find a way of handling llvm builtin functions
 llvm::StringMap<std::function<void(llvm::CallBase *, DOPGuard::AllocaVec *)>>
     DOPGuard::funcSymbolDispatchMap = {
         {"memcpy",
          [](llvm::CallBase *i, DOPGuard::AllocaVec *vec) {
            Value *op = i->getOperand(0);
-           if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
-             vec->push_back(al);
+           if (GetElementPtrInst *geInst = dyn_cast<GetElementPtrInst>(op)) {
+             Value *dstVar = geInst->getPointerOperand();
+             if (AllocaInst *al = dyn_cast<AllocaInst>(dstVar)) {
+               vec->push_back(al);
+             }
            }
          }},
         {"read",
          [](llvm::CallBase *i, DOPGuard::AllocaVec *vec) {
            Value *op = i->getOperand(1);
-           if (AllocaInst *al = dyn_cast<AllocaInst>(op)) {
-             vec->push_back(al);
+           if (GetElementPtrInst *geInst = dyn_cast<GetElementPtrInst>(op)) {
+             Value *dstVar = geInst->getPointerOperand();
+             if (AllocaInst *al = dyn_cast<AllocaInst>(dstVar)) {
+               vec->push_back(al);
+             }
            }
          }},
 };
@@ -42,6 +50,11 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
         m, al->getAllocatedType(), false,
         GlobalValue::InternalLinkage, // TODO: change to static
         nullptr, "", nullptr, GlobalValue::ThreadLocalMode::LocalExecTLSModel);
+
+    // Set initializer
+    UndefValue *allocaInitializer = UndefValue::get(al->getAllocatedType());
+    alloca_global->setInitializer(allocaInitializer);
+
     ReplaceInstWithValue(al->getParent()->getInstList(), ii,
                          dyn_cast<Value>(alloca_global));
   }
@@ -86,7 +99,10 @@ bool DOPGuard::runOnModule(Module &M) {
       for (BasicBlock::iterator inst = BB.begin(), IE = BB.end(); inst != IE;
            ++inst) {
         if (CallBase *cb = dyn_cast<CallBase>(inst)) {
-          StringRef name = cb->getName();
+          Function *f = cb->getCalledFunction();
+          if (!f) // check for indirect call
+            continue;
+          StringRef name = f->getName();
           if (DOPGuard::funcSymbolDispatchMap.count(name)) {
             funcSymbolDispatchMap[name](cb, &vulnAllocas);
           }
