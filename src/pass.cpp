@@ -152,14 +152,10 @@ bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
 llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dopg-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            PB.registerPipelineParsingCallback(
-                [](StringRef Name, ModulePassManager &MPM,
-                   ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "dopg-pass") {
-                    MPM.addPass(DOPGuard());
-                    return true;
-                  }
-                  return false;
+            PB.registerPipelineEarlySimplificationEPCallback(
+                [](ModulePassManager &MPM,
+                   llvm::PassBuilder::OptimizationLevel Level) {
+                  MPM.addPass(DOPGuard());
                 });
           }};
 }
