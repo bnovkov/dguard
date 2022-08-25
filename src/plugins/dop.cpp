@@ -1,9 +1,26 @@
 
 #include "plugin.hpp"
 
+#include "llvm/ADT/None.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/CodeGen.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include <llvm/ADT/StringRef.h>
+#include <llvm/IR/GlobalValue.h>
+
+using namespace llvm;
+
+#define DEBUG_TYPE "dop-plugin-pass"
+
 class DOPPassPlugin {
 
 private:
+  typedef llvm::SmallVector<llvm::AllocaInst *, 32> AllocaVec;
+
   // TODO: find a way of handling llvm builtin functions
   static llvm::StringMap<std::function<void(llvm::CallBase *, AllocaVec *)>>
       funcSymbolDispatchMap;
@@ -31,7 +48,7 @@ private:
         return true;
       } else {
         Instruction *cb3 = dyn_cast<Instruction>(U);
-        return DOPGuard::findInstruction(cb3);
+        return findInstruction(cb3);
       }
     }
     return false;
@@ -44,10 +61,10 @@ private:
       LLVM_DEBUG(dbgs() << "\t" << *U << "\n");
       if (CmpInst *cb2 = dyn_cast<CmpInst>(U)) {
 
-        return DOPGuard::findBranch(cb2);
+        return findBranch(cb2);
       } else {
         Instruction *cb3 = dyn_cast<Instruction>(U);
-        return DOPGuard::findInstruction(cb3);
+        return findInstruction(cb3);
       }
     }
     return false;
@@ -104,10 +121,11 @@ public:
   };
 };
 
-llvm::StringMap<std::function<void(llvm::CallBase *, DOPGuard::AllocaVec *)>>
+llvm::StringMap<
+    std::function<void(llvm::CallBase *, DOPPassPlugin::AllocaVec *)>>
     DOPPassPlugin::funcSymbolDispatchMap = {
         {"memcpy",
-         [](llvm::CallBase *i, DOPGuard::AllocaVec *vec) {
+         [](llvm::CallBase *i, DOPPassPlugin::AllocaVec *vec) {
            Value *op = i->getOperand(0);
            if (GetElementPtrInst *geInst = dyn_cast<GetElementPtrInst>(op)) {
              Value *dstVar = geInst->getPointerOperand();
@@ -117,7 +135,7 @@ llvm::StringMap<std::function<void(llvm::CallBase *, DOPGuard::AllocaVec *)>>
            }
          }},
         {"read",
-         [](llvm::CallBase *i, DOPGuard::AllocaVec *vec) {
+         [](llvm::CallBase *i, DOPPassPlugin::AllocaVec *vec) {
            Value *op = i->getOperand(1);
            if (GetElementPtrInst *geInst = dyn_cast<GetElementPtrInst>(op)) {
              Value *dstVar = geInst->getPointerOperand();
@@ -127,3 +145,5 @@ llvm::StringMap<std::function<void(llvm::CallBase *, DOPGuard::AllocaVec *)>>
            }
          }},
 };
+
+REGISTER_PASS_PLUGIN("dop", DOPPassPlugin::runOnModule);

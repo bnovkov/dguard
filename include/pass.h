@@ -21,24 +21,21 @@
 //------------------------------------------------------------------------------
 // New PM interface
 //------------------------------------------------------------------------------
-struct DOPGuard : public llvm::PassInfoMixin<DOPGuard> {
+class DOPGuard : public llvm::PassInfoMixin<DOPGuard> {
+public:
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &);
   bool runOnModule(llvm::Module &M);
 
+  static bool addPassPlugin(std::string, std::function<bool(llvm::Module &)>);
+
 private:
-  typedef llvm::SmallVector<llvm::AllocaInst *, 32> AllocaVec;
-
-  static llvm::StringMap<std::function<void(llvm::CallBase *, AllocaVec *)>>
-      pluginMap;
-
-  void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas);
-  bool findInstruction(llvm::Instruction *Inst);
-  bool findBranch(llvm::CmpInst *Inst);
+  static llvm::StringMap<std::function<bool(llvm::Module &)>> pluginMap;
 };
 //------------------------------------------------------------------------------
 // Legacy PM interface
 //------------------------------------------------------------------------------
-struct LegacyDOPGuard : public llvm::ModulePass {
+class LegacyDOPGuard : public llvm::ModulePass {
+public:
   static char ID;
   LegacyDOPGuard() : ModulePass(ID) {}
   bool runOnModule(llvm::Module &M) override;

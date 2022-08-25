@@ -1,69 +1,35 @@
 
 #include "pass.h"
-
-#include "llvm/ADT/None.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstrTypes.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/Passes/PassBuilder.h"
-#include "llvm/Passes/PassPlugin.h"
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/CodeGen.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include <llvm/ADT/StringRef.h>
-#include <llvm/IR/GlobalValue.h>
+#include <cstdlib>
 
 using namespace llvm;
 
-#define DEBUG_TYPE "dopg-pass"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
+
+#define DEBUG_TYPE "dguard-pass"
 
 bool DOPGuard::runOnModule(Module &M) {
   bool changed = false;
 
-  for (auto &Func : M) {
-    llvm::SmallVector<PointerType, 10> ptrVars;
-    AllocaVec allocasToBePromoted;
-    AllocaVec vulnAllocas;
+  for (auto it = DOPGuard::pluginMap.begin(); it != DOPGuard::pluginMap.end();
+       it++) {
+    bool passChanged = it->second(M);
+    changed = changed || passChanged;
 
-    for (auto &BB : Func) {
-      for (BasicBlock::iterator inst = BB.begin(), IE = BB.end(); inst != IE;
-           ++inst) {
-        if (CallBase *cb = dyn_cast<CallBase>(inst)) {
-          Function *f = cb->getCalledFunction();
-          if (!f) // check for indirect call
-            continue;
-          StringRef name = f->getName();
-          if (DOPGuard::funcSymbolDispatchMap.count(name)) {
-            funcSymbolDispatchMap[name](cb, &vulnAllocas);
-          }
-        }
-      }
-    }
-
-    if (vulnAllocas.size() == 0) {
-      continue;
-    }
-
-    for (auto &BB : Func) {
-      for (BasicBlock::iterator inst = BB.begin(), IE = BB.end(); inst != IE;
-           ++inst) {
-
-        if (AllocaInst *cb = dyn_cast<AllocaInst>(inst)) {
-          Instruction *Inst = dyn_cast<Instruction>(inst);
-
-          if (DOPGuard::findInstruction(Inst)) {
-            allocasToBePromoted.push_back(cb);
-          }
-        }
-      }
-    }
-    if (allocasToBePromoted.size() != 0) {
-      promoteToThreadLocal(M, &allocasToBePromoted);
-      changed = true;
-    }
+    LLVM_DEBUG(dbgs() << "pass " << it->first() << " returned " << passChanged
+                      << "\n");
   }
+
   return changed;
+}
+
+bool DOPGuard::addPassPlugin(std::string name,
+                             std::function<bool(llvm::Module &)> func) {
+  return DOPGuard::pluginMap
+      .insert(std::pair<std::string, std::function<bool(llvm::Module &)>>(name,
+                                                                          func))
+      .second;
 }
 
 PreservedAnalyses DOPGuard::run(llvm::Module &M,
@@ -83,10 +49,14 @@ bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
 llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dopg-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            PB.registerPipelineEarlySimplificationEPCallback(
-                [](ModulePassManager &MPM,
-                   llvm::PassBuilder::OptimizationLevel Level) {
-                  MPM.addPass(DOPGuard());
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, ModulePassManager &MPM,
+                   ArrayRef<PassBuilder::PipelineElement>) {
+                  if (Name == "dopg-pass") {
+                    MPM.addPass(DOPGuard());
+                    return true;
+                  }
+                  return false;
                 });
           }};
 }
@@ -105,3 +75,5 @@ char LegacyDOPGuard::ID = 0;
 static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
                                       /*Name=*/"LegacyDOPGuard",
                                       /*CFGOnly=*/false, /*is_analysis=*/false);
+
+llvm::StringMap<std::function<bool(llvm::Module &)>> DOPGuard::pluginMap = {};

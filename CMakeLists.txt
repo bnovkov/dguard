@@ -75,6 +75,7 @@ include_directories(${LLVM_INCLUDE_DIRS})
 
 add_llvm_library(pass MODULE
   ./src/pass.cpp
+  ./src/plugins/dop.cpp
   DEPENDS
   intrinsics_gen
   PLUGIN_TOOL

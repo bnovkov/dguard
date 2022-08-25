@@ -3,7 +3,7 @@
 
 #define REGISTER_PASS_PLUGIN(plugin_name, module_pass_func)                    \
   bool pass_plugin_name##_entry =                                              \
-      PassPluginRegistry<Plugin>::add(#plugin_name, (module_pass_func))
+      DOPGuard::addPassPlugin(plugin_name, (module_pass_func))
 
 class DGuardPassPlugin {
 public:
