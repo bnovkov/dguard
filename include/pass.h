@@ -29,7 +29,7 @@ private:
   typedef llvm::SmallVector<llvm::AllocaInst *, 32> AllocaVec;
 
   static llvm::StringMap<std::function<void(llvm::CallBase *, AllocaVec *)>>
-      funcSymbolDispatchMap;
+      pluginMap;
 
   void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas);
   bool findInstruction(llvm::Instruction *Inst);
