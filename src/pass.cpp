@@ -1,6 +1,10 @@
 
 #include "pass.h"
+#include "llvm/IR/GlobalValue.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+
 #include <cstdlib>
+#include <sstream>
 
 using namespace llvm;
 
@@ -22,6 +26,38 @@ bool DOPGuard::runOnModule(Module &M) {
   }
 
   return changed;
+}
+
+void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
+  std::ostringstream ss;
+  int allocaIdx = 0;
+
+  for (llvm::AllocaInst *al : *allocas) {
+    BasicBlock::iterator ii(al);
+    const Function *f = ii->getFunction();
+    if (f == nullptr) {
+      ss << ii->getNameOrAsOperand() << allocaIdx;
+    } else {
+      ss << f->getNameOrAsOperand() << ii->getNameOrAsOperand() << allocaIdx;
+    }
+
+    GlobalVariable *alloca_global = new GlobalVariable(
+        m, al->getAllocatedType(), false,
+        GlobalValue::InternalLinkage, // TODO: change to static
+        nullptr, ss.str(), nullptr,
+        GlobalValue::ThreadLocalMode::LocalExecTLSModel);
+
+    // Set initializer
+    UndefValue *allocaInitializer = UndefValue::get(al->getAllocatedType());
+    alloca_global->setInitializer(allocaInitializer);
+
+    ReplaceInstWithValue(al->getParent()->getInstList(), ii,
+                         dyn_cast<Value>(alloca_global));
+
+    ss.clear();
+    ss.str("");
+    allocaIdx++;
+  }
 }
 
 bool DOPGuard::addPassPlugin(std::string name,

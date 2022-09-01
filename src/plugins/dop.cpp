@@ -8,9 +8,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <llvm/ADT/StringRef.h>
-#include <llvm/IR/GlobalValue.h>
 
 using namespace llvm;
 
@@ -19,29 +17,10 @@ using namespace llvm;
 class DOPPassPlugin {
 
 private:
-  typedef llvm::SmallVector<llvm::AllocaInst *, 32> AllocaVec;
-
   // TODO: find a way of handling llvm builtin functions
   static llvm::StringMap<std::function<void(llvm::CallBase *, AllocaVec *)>>
       funcSymbolDispatchMap;
 
-  static void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
-    for (llvm::AllocaInst *al : *allocas) {
-      BasicBlock::iterator ii(al);
-      GlobalVariable *alloca_global = new GlobalVariable(
-          m, al->getAllocatedType(), false,
-          GlobalValue::InternalLinkage, // TODO: change to static
-          nullptr, "", nullptr,
-          GlobalValue::ThreadLocalMode::LocalExecTLSModel);
-
-      // Set initializer
-      UndefValue *allocaInitializer = UndefValue::get(al->getAllocatedType());
-      alloca_global->setInitializer(allocaInitializer);
-
-      ReplaceInstWithValue(al->getParent()->getInstList(), ii,
-                           dyn_cast<Value>(alloca_global));
-    }
-  }
   static bool findBranch(llvm::CmpInst *Inst) {
     for (User *U : Inst->users()) {
       if (dyn_cast<BranchInst>(U) != nullptr) {
@@ -72,7 +51,6 @@ private:
 
 public:
   static bool runOnModule(llvm::Module &M) {
-
     bool changed = false;
 
     for (auto &Func : M) {
@@ -113,7 +91,7 @@ public:
         }
       }
       if (allocasToBePromoted.size() != 0) {
-        promoteToThreadLocal(M, &allocasToBePromoted);
+        DOPGuard::promoteToThreadLocal(M, &allocasToBePromoted);
         changed = true;
       }
     }
@@ -121,11 +99,10 @@ public:
   };
 };
 
-llvm::StringMap<
-    std::function<void(llvm::CallBase *, DOPPassPlugin::AllocaVec *)>>
+llvm::StringMap<std::function<void(llvm::CallBase *, AllocaVec *)>>
     DOPPassPlugin::funcSymbolDispatchMap = {
         {"memcpy",
-         [](llvm::CallBase *i, DOPPassPlugin::AllocaVec *vec) {
+         [](llvm::CallBase *i, AllocaVec *vec) {
            Value *op = i->getOperand(0);
            if (GetElementPtrInst *geInst = dyn_cast<GetElementPtrInst>(op)) {
              Value *dstVar = geInst->getPointerOperand();
@@ -135,7 +112,7 @@ llvm::StringMap<
            }
          }},
         {"read",
-         [](llvm::CallBase *i, DOPPassPlugin::AllocaVec *vec) {
+         [](llvm::CallBase *i, AllocaVec *vec) {
            Value *op = i->getOperand(1);
            if (GetElementPtrInst *geInst = dyn_cast<GetElementPtrInst>(op)) {
              Value *dstVar = geInst->getPointerOperand();
