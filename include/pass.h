@@ -1,9 +1,11 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Pass.h"
@@ -26,10 +28,10 @@ public:
   static void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas);
 
 private:
-  void registerBBLoadStorePair(std::vector<llvm::GlobalValue *>);
-  void instrumentBBLoadStorePair();
-  void emitLoadStoreACLMetadata();
+  static void instrumentIsolatedVars(void);
+  static void emitModuleMetadata(void);
 
+  static std::vector<llvm::GlobalVariable *> isolatedVars;
   static llvm::StringMap<std::function<bool(llvm::Module &)>> pluginMap;
 };
 //------------------------------------------------------------------------------

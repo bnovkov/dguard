@@ -1,6 +1,7 @@
 
 #include "pass.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <cstdlib>
@@ -23,6 +24,11 @@ bool DOPGuard::runOnModule(Module &M) {
 
     LLVM_DEBUG(dbgs() << "pass " << it->first() << " returned " << passChanged
                       << "\n");
+  }
+
+  if (changed) {
+    instrumentIsolatedVars();
+    emitModuleMetadata();
   }
 
   return changed;
@@ -54,10 +60,27 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
     ReplaceInstWithValue(al->getParent()->getInstList(), ii,
                          dyn_cast<Value>(alloca_global));
 
+    isolatedVars.push_back(alloca_global);
+
     ss.clear();
     ss.str("");
     allocaIdx++;
   }
+}
+
+void DOPGuard::instrumentIsolatedVars(void) {
+
+  /*
+   * for (GlobalVariable *g : isolatedVars) {
+   *     TODO
+   * }
+   */
+}
+
+void DOPGuard::emitModuleMetadata(void) {
+  /*
+   * TODO
+   */
 }
 
 bool DOPGuard::addPassPlugin(std::string name,
@@ -113,3 +136,4 @@ static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
                                       /*CFGOnly=*/false, /*is_analysis=*/false);
 
 llvm::StringMap<std::function<bool(llvm::Module &)>> DOPGuard::pluginMap = {};
+std::vector<llvm::GlobalVariable *> isolatedVars = {};
