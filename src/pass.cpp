@@ -36,15 +36,14 @@ bool DOPGuard::runOnModule(Module &M) {
 
 void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
   std::ostringstream ss;
-  int allocaIdx = 0;
 
   for (llvm::AllocaInst *al : *allocas) {
     BasicBlock::iterator ii(al);
     const Function *f = ii->getFunction();
     if (f == nullptr) {
-      ss << ii->getNameOrAsOperand() << allocaIdx;
+      ss << ii->getNameOrAsOperand() << allocaId;
     } else {
-      ss << f->getNameOrAsOperand() << ii->getNameOrAsOperand() << allocaIdx;
+      ss << f->getNameOrAsOperand() << ii->getNameOrAsOperand() << allocaId;
     }
 
     GlobalVariable *alloca_global = new GlobalVariable(
@@ -64,7 +63,7 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
 
     ss.clear();
     ss.str("");
-    allocaIdx++;
+    allocaId++;
   }
 }
 
@@ -135,5 +134,9 @@ static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
                                       /*Name=*/"LegacyDOPGuard",
                                       /*CFGOnly=*/false, /*is_analysis=*/false);
 
+/*
+ * Private class data
+ */
 llvm::StringMap<std::function<bool(llvm::Module &)>> DOPGuard::pluginMap = {};
-std::vector<llvm::GlobalVariable *> isolatedVars = {};
+std::vector<llvm::GlobalVariable *> DOPGuard::isolatedVars = {};
+int DOPGuard::allocaId = 0;
