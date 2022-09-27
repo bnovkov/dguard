@@ -1,7 +1,10 @@
 
 #include "pass.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <cstdlib>
@@ -29,8 +32,9 @@ bool DOPGuard::runOnModule(Module &M) {
   }
 
   if (changed) {
+    injectMetadataInitializer(M);
     instrumentIsolatedVars();
-    emitModuleMetadata();
+    emitModuleMetadata(M);
   }
 
   return changed;
@@ -93,6 +97,31 @@ void DOPGuard::emitModuleMetadata(llvm::Module &m) {
   module_metadata_file.close();
 }
 
+void DOPGuard::injectMetadataInitializer(llvm::Module &m) {
+  Function *main = m.getFunction("main");
+
+  FunctionType *metadata_init_ty;
+  Function *metadata_initF;
+  llvm::LLVMContext &ctx = m.getContext();
+
+  if (main == nullptr)
+    return;
+
+  /* int __tls_isol_metadata_init(void); */
+  metadata_init_ty =
+      FunctionType::get(IntegerType::getInt32Ty(ctx), /*IsVarArgs=*/false);
+  FunctionCallee metadata_init =
+      m.getOrInsertFunction("__tls_isol_metadata_init", metadata_init_ty);
+
+  metadata_initF = dyn_cast<Function>(metadata_init.getCallee());
+  metadata_initF->setDoesNotThrow();
+
+  IRBuilder<> Builder(&*main->getEntryBlock().getFirstInsertionPt());
+
+  /* Inject call to __tls_isol_metadata_init */
+  Builder.CreateCall(metadata_init);
+}
+
 bool DOPGuard::addPassPlugin(std::string name,
                              std::function<bool(llvm::Module &)> func) {
   return DOPGuard::pluginMap
@@ -143,7 +172,8 @@ char LegacyDOPGuard::ID = 0;
 // Register the pass - required for (among others) opt
 static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
                                       /*Name=*/"LegacyDOPGuard",
-                                      /*CFGOnly=*/false, /*is_analysis=*/false);
+                                      /*CFGOnly=*/false,
+                                      /*is_analysis=*/false);
 
 /*
  * Private class data
