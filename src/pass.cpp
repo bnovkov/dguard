@@ -104,21 +104,20 @@ void DOPGuard::injectMetadataInitializer(llvm::Module &m) {
   Function *metadata_initF;
   llvm::LLVMContext &ctx = m.getContext();
 
+  /* Bail if module does not contain main() */
   if (main == nullptr)
     return;
 
-  /* int __tls_isol_metadata_init(void); */
+  /* Declare int __tls_isol_metadata_init(void); */
   metadata_init_ty =
       FunctionType::get(IntegerType::getInt32Ty(ctx), /*IsVarArgs=*/false);
   FunctionCallee metadata_init =
       m.getOrInsertFunction("__tls_isol_metadata_init", metadata_init_ty);
-
   metadata_initF = dyn_cast<Function>(metadata_init.getCallee());
   metadata_initF->setDoesNotThrow();
 
-  IRBuilder<> Builder(&*main->getEntryBlock().getFirstInsertionPt());
-
   /* Inject call to __tls_isol_metadata_init */
+  IRBuilder<> Builder(&*main->getEntryBlock().getFirstInsertionPt());
   Builder.CreateCall(metadata_init);
 }
 
