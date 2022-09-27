@@ -29,7 +29,7 @@ public:
 
 private:
   static void instrumentIsolatedVars(void);
-  static void emitModuleMetadata(void);
+  static void emitModuleMetadata(llvm::Module &m);
 
   static int allocaId;
   static std::vector<llvm::GlobalVariable *> isolatedVars;

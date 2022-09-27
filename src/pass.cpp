@@ -5,6 +5,8 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <cstdlib>
+#include <fstream>
+#include <ios>
 #include <sstream>
 
 using namespace llvm;
@@ -76,10 +78,19 @@ void DOPGuard::instrumentIsolatedVars(void) {
    */
 }
 
-void DOPGuard::emitModuleMetadata(void) {
-  /*
-   * TODO
-   */
+void DOPGuard::emitModuleMetadata(llvm::Module &m) {
+  std::stringstream ss;
+  std::ofstream module_metadata_file;
+
+  ss << m.getName().str() << ".mtdt";
+
+  module_metadata_file.open(ss.str(), std::ios_base::out);
+
+  for (GlobalVariable *g : isolatedVars) {
+    module_metadata_file << g->getName().str() << "\n";
+  }
+
+  module_metadata_file.close();
 }
 
 bool DOPGuard::addPassPlugin(std::string name,
