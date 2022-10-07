@@ -86,4 +86,16 @@ target_include_directories(
   pass
   PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
-  )
+)
+
+add_library(metadata_hook STATIC
+  ./src/metadata_init.c
+)
+
+target_include_directories(
+  metadata_hook
+  PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/./include"
+)
+
+target_link_libraries(metadata_hook -ldl)

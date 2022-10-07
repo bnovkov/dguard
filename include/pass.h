@@ -31,9 +31,11 @@ private:
   static void instrumentIsolatedVars(void);
   static void emitModuleMetadata(llvm::Module &m);
   static void injectMetadataInitializer(llvm::Module &m);
+  static void insertIsolationInsBlockSingleUser(void);
 
   static int allocaId;
-  static std::vector<llvm::GlobalVariable *> isolatedVars;
+  static std::vector<std::pair<llvm::GlobalVariable *, llvm::GlobalVariable *>>
+      isolatedVars;
   static llvm::StringMap<std::function<bool(llvm::Module &)>> pluginMap;
 };
 //------------------------------------------------------------------------------

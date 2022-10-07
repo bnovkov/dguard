@@ -11,6 +11,7 @@
 #include <fstream>
 #include <ios>
 #include <sstream>
+#include <utility>
 
 using namespace llvm;
 
@@ -19,6 +20,9 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dguard-pass"
 
+/*
+ * Runs all defined static analysis plugins on a module.
+ */
 bool DOPGuard::runOnModule(Module &M) {
   bool changed = false;
 
@@ -40,46 +44,72 @@ bool DOPGuard::runOnModule(Module &M) {
   return changed;
 }
 
+/*
+ * Takes a stack variable and replaces it with a LocalExec TLS variable.
+ * Also defines a separate metadata variable that represents the TLS offset to
+ * the promoted variable.
+ */
 void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
-  std::ostringstream ss;
+  std::ostringstream varName;
+  std::ostringstream offVarName;
 
   for (llvm::AllocaInst *al : *allocas) {
     BasicBlock::iterator ii(al);
     const Function *f = ii->getFunction();
     if (f == nullptr) {
-      ss << ii->getNameOrAsOperand() << allocaId;
+      varName << ii->getNameOrAsOperand() << allocaId;
     } else {
-      ss << f->getNameOrAsOperand() << ii->getNameOrAsOperand() << allocaId;
+      varName << f->getNameOrAsOperand() << ii->getNameOrAsOperand()
+              << allocaId;
     }
 
+    /* Declare new "stack" variable */
     GlobalVariable *alloca_global = new GlobalVariable(
         m, al->getAllocatedType(), false,
         GlobalValue::InternalLinkage, // TODO: change to static
-        nullptr, ss.str(), nullptr,
+        nullptr, varName.str(), nullptr,
         GlobalValue::ThreadLocalMode::LocalExecTLSModel);
 
-    // Set initializer
+    /* Set initializer */
     UndefValue *allocaInitializer = UndefValue::get(al->getAllocatedType());
     alloca_global->setInitializer(allocaInitializer);
 
     ReplaceInstWithValue(al->getParent()->getInstList(), ii,
                          dyn_cast<Value>(alloca_global));
 
-    isolatedVars.push_back(alloca_global);
+    /*
+     * Declare a new symbol holding the TLS offset of the isolated stack
+     * variable. Our patched linker will recognize this metadata variable and
+     * inject the offset in the appropriate MOV instruction
+     */
+    offVarName << "__dguardoff_" << varName.str() << "_offset";
+    GlobalVariable *alloca_global_off = new GlobalVariable(
+        m, llvm::IntegerType::getInt32Ty(m.getContext()), false,
+        GlobalValue::InternalLinkage, nullptr, offVarName.str(), nullptr,
+        GlobalValue::ThreadLocalMode::LocalExecTLSModel);
 
-    ss.clear();
-    ss.str("");
+    isolatedVars.push_back(std::make_pair(alloca_global, alloca_global_off));
+
+    varName.clear();
+    varName.str("");
+
+    offVarName.clear();
+    offVarName.str("");
+
     allocaId++;
   }
 }
 
-void DOPGuard::instrumentIsolatedVars(void) {
+/*
+ * Inserts a block of instructions that enforce variable isolation
+ * by calculating the target address and comparing it with the allowed ones.
+ */
+void DOPGuard::insertIsolationInsBlockSingleUser(void) {}
 
-  /*
-   * for (GlobalVariable *g : isolatedVars) {
-   *     TODO
-   * }
-   */
+void DOPGuard::instrumentIsolatedVars(void) {
+  for (auto &g : isolatedVars) {
+    //    GlobalVariable *isolVar = g.first;
+  }
 }
 
 void DOPGuard::emitModuleMetadata(llvm::Module &m) {
@@ -90,13 +120,17 @@ void DOPGuard::emitModuleMetadata(llvm::Module &m) {
 
   module_metadata_file.open(ss.str(), std::ios_base::out);
 
-  for (GlobalVariable *g : isolatedVars) {
-    module_metadata_file << g->getName().str() << "\n";
+  for (auto &g : isolatedVars) {
+    module_metadata_file << g.first->getName().str() << "\n";
   }
 
   module_metadata_file.close();
 }
 
+/*
+ * Injects a call to a function that populates relevant runtime metadata.
+ * The function call is performed immediately after entering main().
+ */
 void DOPGuard::injectMetadataInitializer(llvm::Module &m) {
   Function *main = m.getFunction("main");
 
@@ -178,5 +212,6 @@ static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
  * Private class data
  */
 llvm::StringMap<std::function<bool(llvm::Module &)>> DOPGuard::pluginMap = {};
-std::vector<llvm::GlobalVariable *> DOPGuard::isolatedVars = {};
+std::vector<std::pair<llvm::GlobalVariable *, llvm::GlobalVariable *>>
+    DOPGuard::isolatedVars = {};
 int DOPGuard::allocaId = 0;
