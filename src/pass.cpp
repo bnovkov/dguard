@@ -1,10 +1,16 @@
 
 #include "pass.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Use.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <cstdlib>
@@ -80,13 +86,14 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
     /*
      * Declare a new symbol holding the TLS offset of the isolated stack
      * variable. Our patched linker will recognize this metadata variable and
-     * inject the offset in the appropriate MOV instruction
+     * inject the offset in the appropriate MOV instruction.
      */
     offVarName << "__dguardoff_" << varName.str() << "_offset";
     GlobalVariable *alloca_global_off = new GlobalVariable(
         m, llvm::IntegerType::getInt32Ty(m.getContext()), false,
         GlobalValue::InternalLinkage, nullptr, offVarName.str(), nullptr,
         GlobalValue::ThreadLocalMode::LocalExecTLSModel);
+    alloca_global_off->setInitializer(allocaInitializer);
 
     isolatedVars.push_back(std::make_pair(alloca_global, alloca_global_off));
 
@@ -103,12 +110,52 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
 /*
  * Inserts a block of instructions that enforce variable isolation
  * by calculating the target address and comparing it with the allowed ones.
+ *
+ * The target BasicBlock is split before the instruction "u" and the instruction
+ * block is appended to the newly created, predecessing BB.
  */
-void DOPGuard::insertIsolationInsBlockSingleUser(void) {}
+void DOPGuard::insertIsolationBBSingleUser(User *u, GlobalVariable *offsetVar) {
+  Instruction *i, *predTerm;
+  BasicBlock *old, *pred;
+  FunctionType *rdFSType;
+  Function *rdFSbase;
+  Module *m;
 
+  if (!(isa<llvm::LoadInst>(u) || !isa<llvm::StoreInst>(u))) {
+    return;
+  }
+
+  i = dyn_cast<llvm::Instruction>(u);
+  old = i->getParent();
+  pred = SplitBlock(old, i, static_cast<DominatorTree *>(nullptr), nullptr,
+                    nullptr, "",
+                    /* before */ true);
+  if (pred == nullptr) {
+    // debug
+    abort();
+  }
+  predTerm = &pred->back();
+  m = old->getModule();
+  rdFSType = FunctionType::get(IntegerType::getInt64PtrTy(m->getContext()));
+
+  IRBuilder<> builder(pred);
+  builder.SetInsertPoint(predTerm);
+
+  /* "Load" isolated var TLS offset */
+  builder.CreateLoad(offsetVar->getValueType(), dyn_cast<Value>(offsetVar));
+  /* Get TLS block addr */
+  builder.CreateCall(rdFSbase);
+}
+
+/*
+ * Traverses each user of an isolated variable and instruments accordingly.
+ */
 void DOPGuard::instrumentIsolatedVars(void) {
   for (auto &g : isolatedVars) {
-    //    GlobalVariable *isolVar = g.first;
+    GlobalVariable *isolVar = g.first;
+    for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
+      insertIsolationBBSingleUser(*it, g.second);
+    }
   }
 }
 

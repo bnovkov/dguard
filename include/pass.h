@@ -31,7 +31,8 @@ private:
   static void instrumentIsolatedVars(void);
   static void emitModuleMetadata(llvm::Module &m);
   static void injectMetadataInitializer(llvm::Module &m);
-  static void insertIsolationInsBlockSingleUser(void);
+  static void insertIsolationBBSingleUser(llvm::User *u,
+                                          llvm::GlobalVariable *g);
 
   static int allocaId;
   static std::vector<std::pair<llvm::GlobalVariable *, llvm::GlobalVariable *>>
