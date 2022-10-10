@@ -1,11 +1,13 @@
-#include <cstdint>
+#define _GNU_SOURCE
+
+#include <strings.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
+#include <dlfcn.h>
 #include <sys/types.h>
 #include <dirent.h>
-#include <dlfcn.h>
 
 #include <errno.h>
 
@@ -15,7 +17,7 @@
 
 static struct sc_array_str addr_arr;
 
-static int parse_mtdt_file(const char *fname) {
+static int parse_mtdt_file(const char *fname, void *dlh) {
 
   size_t len = 0;
   ssize_t nread = 0;
@@ -28,6 +30,12 @@ static int parse_mtdt_file(const char *fname) {
 
   errno = 0;
   while ((nread = getline(&line, &len, f)) != -1) {
+
+    char *c = index(line, '\n');
+    if (c != NULL) {
+      *c = '\0';
+    }
+
     dlerror();
     void *tls_var_addr = dlsym(RTLD_DEFAULT, line);
     if (tls_var_addr == NULL) {
@@ -64,6 +72,15 @@ int __tls_isol_metadata_init(void) {
     exit(-1);
   }
 
+/*
+ dlh = dlopen("/proc/self/exe", RTLD_LOCAL | RTLD_LAZY);
+if (dlh == NULL) {
+  fprintf(stderr, "dlsym: %s\n", dlerror());
+  exit(-1);
+}
+
+*/
+#if 0
   /* Search curdir for *.mtdt file and load them */
   do {
     errno = 0;
@@ -81,10 +98,11 @@ int __tls_isol_metadata_init(void) {
       continue;
     }
 
-    if (parse_mtdt_file(cur_dirent->d_name)) {
+    if (parse_mtdt_file(cur_dirent->d_name, dlh)) {
+      // dlclose(dlh);
       exit(-1);
     }
   } while (1);
-
+#endif
   return 0;
 }

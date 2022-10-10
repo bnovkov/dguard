@@ -182,9 +182,27 @@ void DOPGuard::insertIsolationBBSingleUser(User *u, GlobalVariable *offsetVar) {
 }
 
 /*
- * Creates a BB that calls "__dguard_abort" in function 'F'.
+ * Returns a BB that calls "__dguard_abort" in function 'F'.
  */
 BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
+  BasicBlock *BB = nullptr;
+
+  /* Check whether the corresponding BB is already defined */
+  for (auto it = F->begin(); it != F->end(); it++) {
+    if (!it->hasName())
+      continue;
+
+    if (it->getName().equals("__dguard_call_abort_block")) {
+      BB = &(*it);
+      break;
+    }
+  }
+
+  if (BB != nullptr) {
+    return BB;
+  }
+
+  /* Else allocate create BB */
   LLVMContext &ctx = m->getContext();
   IRBuilder<> builder(ctx);
 
@@ -193,18 +211,17 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
   FunctionType *type =
       FunctionType::get(Type::getVoidTy(ctx), abortArgTy, false);
 
-  Function *dguardAbortF =
-      Function::Create(type, Function::ExternalLinkage, F->getAddressSpace(),
-                       "__dguard_abort", m);
+  FunctionCallee dguardAbort = m->getOrInsertFunction("__dguard_abort", type);
+  Function *dguardAbortF = dyn_cast<Function>(dguardAbort.getCallee());
   dguardAbortF->addFnAttr(Attribute::get(ctx, "noreturn", "true"));
+  // dguardAbortF->deleteBody();
 
-  BasicBlock *BB = BasicBlock::Create(ctx, "__dguard_call_abort_block", F);
+  BB = BasicBlock::Create(ctx, "__dguard_call_abort_block", F);
   auto funcName =
       builder.CreateGlobalStringPtr(F->getName(), "", F->getAddressSpace(), m);
 
   builder.SetInsertPoint(BB);
-
-  CallInst::Create(dguardAbortF, funcName, "", BB);
+  builder.CreateCall(dguardAbort, {funcName});
   builder.CreateUnreachable();
 
   return BB;
