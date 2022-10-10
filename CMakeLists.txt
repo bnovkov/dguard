@@ -88,14 +88,15 @@ target_include_directories(
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
 
-add_library(metadata_hook STATIC
-  ./src/metadata_init.c
+add_library(dguard STATIC
+  ./src/lib/metadata_init.c
+  ./src/lib/dguard_funcs.c
 )
 
 target_include_directories(
-  metadata_hook
+  dguard
   PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
 
-target_link_libraries(metadata_hook -ldl)
+target_link_libraries(dguard -ldl)

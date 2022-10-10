@@ -33,6 +33,8 @@ private:
   static void injectMetadataInitializer(llvm::Module &m);
   static void insertIsolationBBSingleUser(llvm::User *u,
                                           llvm::GlobalVariable *g);
+  static llvm::BasicBlock *createAbortCallBB(llvm::Module *m,
+                                             llvm::Function *F);
 
   static int allocaId;
   static std::vector<std::pair<llvm::GlobalVariable *, llvm::GlobalVariable *>>

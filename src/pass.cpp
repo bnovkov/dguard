@@ -11,6 +11,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Use.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <cstdlib>
@@ -90,10 +91,13 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
      */
     offVarName << "__dguardoff_" << varName.str() << "_offset";
     GlobalVariable *alloca_global_off = new GlobalVariable(
-        m, llvm::IntegerType::getInt32Ty(m.getContext()), false,
+        m, IntegerType::getInt64Ty(m.getContext()), false,
         GlobalValue::InternalLinkage, nullptr, offVarName.str(), nullptr,
         GlobalValue::ThreadLocalMode::LocalExecTLSModel);
-    alloca_global_off->setInitializer(allocaInitializer);
+
+    UndefValue *allocaOffInitializer =
+        UndefValue::get(IntegerType::getInt64Ty(m.getContext()));
+    alloca_global_off->setInitializer(allocaOffInitializer);
 
     isolatedVars.push_back(std::make_pair(alloca_global, alloca_global_off));
 
@@ -118,10 +122,15 @@ void DOPGuard::insertIsolationBBSingleUser(User *u, GlobalVariable *offsetVar) {
   Instruction *i, *predTerm;
   BasicBlock *old, *pred;
   FunctionType *rdFSType;
-  Function *rdFSbase;
   Module *m;
+  Value *loadStoreTargetPtr;
+  BasicBlock *abortBB;
 
-  if (!(isa<llvm::LoadInst>(u) || !isa<llvm::StoreInst>(u))) {
+  if (isa<llvm::LoadInst>(u)) {
+    loadStoreTargetPtr = u->getOperand(0);
+  } else if (isa<llvm::StoreInst>(u)) {
+    loadStoreTargetPtr = u->getOperand(1);
+  } else {
     return;
   }
 
@@ -136,15 +145,69 @@ void DOPGuard::insertIsolationBBSingleUser(User *u, GlobalVariable *offsetVar) {
   }
   predTerm = &pred->back();
   m = old->getModule();
-  rdFSType = FunctionType::get(IntegerType::getInt64PtrTy(m->getContext()));
+  auto &C = m->getContext();
+
+  /* Fetch 'rdfsbase64' */
+  rdFSType = FunctionType::get(IntegerType::getInt64PtrTy(C), false);
+  FunctionCallee rdFS64 =
+      m->getOrInsertFunction("__builtin_ia32_rdfsbase64", rdFSType);
+
+  /* Create abortBB */
+  abortBB = createAbortCallBB(m, old->getParent());
 
   IRBuilder<> builder(pred);
   builder.SetInsertPoint(predTerm);
 
   /* "Load" isolated var TLS offset */
-  builder.CreateLoad(offsetVar->getValueType(), dyn_cast<Value>(offsetVar));
+  LoadInst *varOffLoad =
+      builder.CreateLoad(offsetVar->getValueType(), dyn_cast<Value>(offsetVar));
   /* Get TLS block addr */
-  builder.CreateCall(rdFSbase);
+  CallInst *rdFSInst = builder.CreateCall(rdFS64);
+  Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
+                                            IntegerType::getInt64Ty(C));
+  /* Add offset to TLS base ptr */
+  Value *allowedVarPtrInt =
+      builder.CreateAdd(TLSPtrInt, dyn_cast<Value>(varOffLoad));
+
+  /* Compare the target and calculated pointer */
+  Value *equal = builder.CreateICmpEQ(
+      builder.CreateIntToPtr(allowedVarPtrInt, loadStoreTargetPtr->getType()),
+      loadStoreTargetPtr);
+
+  /* Insert a conditional branch */
+  builder.CreateCondBr(equal, old, abortBB);
+
+  /* Erase unconditional branch placed by SplitBlock */
+  pred->getTerminator()->eraseFromParent();
+}
+
+/*
+ * Creates a BB that calls "__dguard_abort" in function 'F'.
+ */
+BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
+  LLVMContext &ctx = m->getContext();
+  IRBuilder<> builder(ctx);
+
+  /* Fetch "__dguard_abort" */
+  PointerType *abortArgTy = PointerType::getUnqual(Type::getInt8Ty(ctx));
+  FunctionType *type =
+      FunctionType::get(Type::getVoidTy(ctx), abortArgTy, false);
+
+  Function *dguardAbortF =
+      Function::Create(type, Function::ExternalLinkage, F->getAddressSpace(),
+                       "__dguard_abort", m);
+  dguardAbortF->addFnAttr(Attribute::get(ctx, "noreturn", "true"));
+
+  BasicBlock *BB = BasicBlock::Create(ctx, "__dguard_call_abort_block", F);
+  auto funcName =
+      builder.CreateGlobalStringPtr(F->getName(), "", F->getAddressSpace(), m);
+
+  builder.SetInsertPoint(BB);
+
+  CallInst::Create(dguardAbortF, funcName, "", BB);
+  builder.CreateUnreachable();
+
+  return BB;
 }
 
 /*
