@@ -205,6 +205,7 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
   /* Else allocate create BB */
   LLVMContext &ctx = m->getContext();
   IRBuilder<> builder(ctx);
+  std::stringstream ss("");
 
   /* Fetch "__dguard_abort" */
   PointerType *abortArgTy = PointerType::getUnqual(Type::getInt8Ty(ctx));
@@ -217,11 +218,16 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
   // dguardAbortF->deleteBody();
 
   BB = BasicBlock::Create(ctx, "__dguard_call_abort_block", F);
-  auto funcName =
-      builder.CreateGlobalStringPtr(F->getName(), "", F->getAddressSpace(), m);
+  ss << F->getName().str() << "_fname";
+
+  Value *funcNameGlobVarVal = m->getGlobalVariable(ss.str());
+  if (funcNameGlobVarVal == nullptr) {
+    funcNameGlobVarVal = builder.CreateGlobalStringPtr(F->getName(), ss.str(),
+                                                       F->getAddressSpace(), m);
+  }
 
   builder.SetInsertPoint(BB);
-  builder.CreateCall(dguardAbort, {funcName});
+  builder.CreateCall(dguardAbort, {funcNameGlobVarVal});
   builder.CreateUnreachable();
 
   return BB;
