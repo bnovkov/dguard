@@ -1,6 +1,7 @@
 
 #include "pass.h"
 #include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/GlobalValue.h"
@@ -10,6 +11,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Use.h"
+#include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -43,12 +45,34 @@ bool DOPGuard::runOnModule(Module &M) {
   }
 
   if (changed) {
-    injectMetadataInitializer(M);
+    calculateMetadataType(M);
+    createMetadataArray(M);
     instrumentIsolatedVars();
     emitModuleMetadata(M);
   }
 
   return changed;
+}
+
+/*
+ * Define the label array.
+ */
+void DOPGuard::createMetadataArray(llvm::Module &m) {
+  ArrayType *arrType = ArrayType::get(labelMetadataType, isolatedVars.size());
+
+  GlobalVariable *arr = new GlobalVariable(
+      m, arrType, false, GlobalValue::ExternalLinkage, nullptr, labelArrName);
+  arr->setInitializer(ConstantAggregateZero::get(arrType));
+  arr->setAlignment(MaybeAlign(8));
+}
+
+/*
+ * Determine size of label type based on the number of
+ * instrumented variable and labels.
+ */
+void DOPGuard::calculateMetadataType(llvm::Module &m) {
+  LLVMContext &C = m.getContext();
+  labelMetadataType = IntegerType::getInt64Ty(C);
 }
 
 /*
@@ -58,7 +82,6 @@ bool DOPGuard::runOnModule(Module &M) {
  */
 void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
   std::ostringstream varName;
-  std::ostringstream offVarName;
 
   for (llvm::AllocaInst *al : *allocas) {
     BasicBlock::iterator ii(al);
@@ -70,7 +93,7 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
               << allocaId;
     }
 
-    /* Declare new "stack" variable */
+    /* Declare the new "stack" variable */
     GlobalVariable *alloca_global = new GlobalVariable(
         m, al->getAllocatedType(), false,
         GlobalValue::InternalLinkage, // TODO: change to static
@@ -84,101 +107,121 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
     ReplaceInstWithValue(al->getParent()->getInstList(), ii,
                          dyn_cast<Value>(alloca_global));
 
-    /*
-     * Declare a new symbol holding the TLS offset of the isolated stack
-     * variable. Our patched linker will recognize this metadata variable and
-     * inject the offset in the appropriate MOV instruction.
-     */
-    offVarName << "__dguardoff_" << varName.str() << "_offset";
-    GlobalVariable *alloca_global_off = new GlobalVariable(
-        m, IntegerType::getInt64Ty(m.getContext()), false,
-        GlobalValue::InternalLinkage, nullptr, offVarName.str(), nullptr,
-        GlobalValue::ThreadLocalMode::LocalExecTLSModel);
-
-    UndefValue *allocaOffInitializer =
-        UndefValue::get(IntegerType::getInt64Ty(m.getContext()));
-    alloca_global_off->setInitializer(allocaOffInitializer);
-
-    isolatedVars.push_back(std::make_pair(alloca_global, alloca_global_off));
+    isolatedVars.push_back(alloca_global);
 
     varName.clear();
     varName.str("");
-
-    offVarName.clear();
-    offVarName.str("");
 
     allocaId++;
   }
 }
 
 /*
- * Inserts a block of instructions that enforce variable isolation
- * by calculating the target address and comparing it with the allowed ones.
+ * Inserts a block of instructions that enforce dataflow integrity
+ * by indexing into the metadata field, calculating the chosen distance metric
+ * for the last recorded store label and the current label, and comparing the
+ * result with the local threshold.
  *
  * The target BasicBlock is split before the instruction "u" and the instruction
- * block is appended to the newly created, predecessing BB.
+ * block is appended to the newly created, preceding BB.
  */
-void DOPGuard::insertIsolationBBSingleUser(User *u, GlobalVariable *offsetVar) {
+void DOPGuard::insertDFIInst(User *u) {
   Instruction *i, *predTerm;
   BasicBlock *old, *pred;
   FunctionType *rdFSType;
-  Module *m;
   Value *loadStoreTargetPtr;
   BasicBlock *abortBB;
 
-  if (isa<llvm::LoadInst>(u)) {
-    loadStoreTargetPtr = u->getOperand(0);
-  } else if (isa<llvm::StoreInst>(u)) {
-    loadStoreTargetPtr = u->getOperand(1);
-  } else {
-    return;
-  }
-
   i = dyn_cast<llvm::Instruction>(u);
-  old = i->getParent();
-  pred = SplitBlock(old, i, static_cast<DominatorTree *>(nullptr), nullptr,
-                    nullptr, "",
-                    /* before */ true);
-  if (pred == nullptr) {
-    // debug
-    abort();
-  }
-  predTerm = &pred->back();
-  m = old->getModule();
-  auto &C = m->getContext();
+
+  Module *m = i->getModule();
+  LLVMContext &C = u->getContext();
+  Value *metadataArray = m->getGlobalVariable(DOPGuard::labelArrName);
 
   /* Fetch 'rdfsbase64' */
   rdFSType = FunctionType::get(IntegerType::getInt64PtrTy(C), false);
   FunctionCallee rdFS64 =
       m->getOrInsertFunction("__builtin_ia32_rdfsbase64", rdFSType);
 
-  /* Create abortBB */
-  abortBB = createAbortCallBB(m, old->getParent());
+  if (isa<llvm::LoadInst>(i)) {
+    loadStoreTargetPtr = i->getOperand(0);
 
-  IRBuilder<> builder(pred);
-  builder.SetInsertPoint(predTerm);
+    old = i->getParent();
+    pred = SplitBlock(old, i, static_cast<DominatorTree *>(nullptr), nullptr,
+                      nullptr, "",
+                      /* before */ true);
+    if (pred == nullptr) {
+      // debug
+      abort();
+    }
+    predTerm = &pred->back();
 
-  /* "Load" isolated var TLS offset */
-  LoadInst *varOffLoad =
-      builder.CreateLoad(offsetVar->getValueType(), dyn_cast<Value>(offsetVar));
-  /* Get TLS block addr */
-  CallInst *rdFSInst = builder.CreateCall(rdFS64);
-  Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
-                                            IntegerType::getInt64Ty(C));
-  /* Add offset to TLS base ptr */
-  Value *allowedVarPtrInt =
-      builder.CreateAdd(TLSPtrInt, dyn_cast<Value>(varOffLoad));
+    /* Create abortBB */
+    abortBB = createAbortCallBB(m, old->getParent());
 
-  /* Compare the target and calculated pointer */
-  Value *equal = builder.CreateICmpEQ(
-      builder.CreateIntToPtr(allowedVarPtrInt, loadStoreTargetPtr->getType()),
-      loadStoreTargetPtr);
+    IRBuilder<> builder(pred);
+    builder.SetInsertPoint(predTerm);
 
-  /* Insert a conditional branch */
-  builder.CreateCondBr(equal, old, abortBB);
+    /* Get TLS block addr */
+    CallInst *rdFSInst = builder.CreateCall(rdFS64);
+    Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
+                                              IntegerType::getInt64Ty(C));
+    /* Fetch target address */
+    Value *targetPtrInt =
+        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C));
 
-  /* Erase unconditional branch placed by SplitBlock */
-  pred->getTerminator()->eraseFromParent();
+    /* Index into label array */
+    Value *metadataPtr = builder.CreateGEP(
+        metadataArray->getType()->getScalarType()->getPointerElementType(),
+        metadataArray,
+        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType),
+                           builder.CreateSub(targetPtrInt, TLSPtrInt)}));
+
+    /* Fetch last label */
+    Value *lastLabel =
+        builder.CreateLoad(DOPGuard::labelMetadataType, metadataPtr);
+
+    /* Calculate distance metric */
+    Value *distance = builder.CreateXor(lastLabel, lastLabel);
+
+    /* Compare with threshold */
+    // TODO: calculate and store thresholds in a
+    // "ProtectedVar" wrapper class
+    Value *equal = builder.CreateICmpEQ(
+        distance,
+        dyn_cast<Value>(Constant::getNullValue(DOPGuard::labelMetadataType)));
+
+    /* Insert a conditional branch */
+    builder.CreateCondBr(equal, old, abortBB);
+
+    /* Erase unconditional branch placed by SplitBlock */
+    pred->getTerminator()->eraseFromParent();
+
+  } else if (isa<llvm::StoreInst>(i)) {
+    loadStoreTargetPtr = i->getOperand(1);
+
+    IRBuilder<> builder(i->getParent());
+    builder.SetInsertPoint(i);
+
+    /* Get TLS block addr */
+    CallInst *rdFSInst = builder.CreateCall(rdFS64);
+    Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
+                                              IntegerType::getInt64Ty(C));
+
+    Value *index = builder.CreateSub(
+        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C)),
+        TLSPtrInt);
+
+    /* Index into label array */
+    Value *metadataPtr = builder.CreateGEP(
+        metadataArray->getType()->getScalarType()->getPointerElementType(),
+        metadataArray,
+        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType), index}));
+
+    /* Store current label */
+    // TODO: fetch labels from static store
+    builder.CreateStore(Constant::getNullValue(labelMetadataType), metadataPtr);
+  }
 }
 
 /*
@@ -202,7 +245,7 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
     return BB;
   }
 
-  /* Else allocate create BB */
+  /* Else create BB */
   LLVMContext &ctx = m->getContext();
   IRBuilder<> builder(ctx);
   std::stringstream ss("");
@@ -238,9 +281,9 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
  */
 void DOPGuard::instrumentIsolatedVars(void) {
   for (auto &g : isolatedVars) {
-    GlobalVariable *isolVar = g.first;
+    GlobalVariable *isolVar = g;
     for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
-      insertIsolationBBSingleUser(*it, g.second);
+      insertDFIInst(*it);
     }
   }
 }
@@ -254,7 +297,7 @@ void DOPGuard::emitModuleMetadata(llvm::Module &m) {
   module_metadata_file.open(ss.str(), std::ios_base::out);
 
   for (auto &g : isolatedVars) {
-    module_metadata_file << g.first->getName().str() << "\n";
+    module_metadata_file << g->getName().str() << "\n";
   }
 
   module_metadata_file.close();
@@ -345,6 +388,7 @@ static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
  * Private class data
  */
 llvm::StringMap<std::function<bool(llvm::Module &)>> DOPGuard::pluginMap = {};
-std::vector<std::pair<llvm::GlobalVariable *, llvm::GlobalVariable *>>
-    DOPGuard::isolatedVars = {};
+std::vector<llvm::GlobalVariable *> DOPGuard::isolatedVars = {};
 int DOPGuard::allocaId = 0;
+const std::string DOPGuard::labelArrName = "__dguard_label_arr";
+llvm::Type *DOPGuard::labelMetadataType = nullptr;

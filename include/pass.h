@@ -22,7 +22,7 @@ public:
 
   /*
    * Adds a static analysis/transformation pass function to the plugin map.
-   * These are run each time the 'runOnModule' method is invoked.
+   * These run each time the 'runOnModule' method is invoked.
    */
   static bool addPassPlugin(std::string, std::function<bool(llvm::Module &)>);
   static void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas);
@@ -31,15 +31,19 @@ private:
   static void instrumentIsolatedVars(void);
   static void emitModuleMetadata(llvm::Module &m);
   static void injectMetadataInitializer(llvm::Module &m);
-  static void insertIsolationBBSingleUser(llvm::User *u,
-                                          llvm::GlobalVariable *g);
+  static void insertDFIInst(llvm::User *u);
+  static void createMetadataArray(llvm::Module &m);
+  static void calculateMetadataType(llvm::Module &m);
+
   static llvm::BasicBlock *createAbortCallBB(llvm::Module *m,
                                              llvm::Function *F);
 
   static int allocaId;
-  static std::vector<std::pair<llvm::GlobalVariable *, llvm::GlobalVariable *>>
-      isolatedVars;
+  static std::vector<llvm::GlobalVariable *> isolatedVars;
   static llvm::StringMap<std::function<bool(llvm::Module &)>> pluginMap;
+  static llvm::Type *labelMetadataType;
+
+  static const std::string labelArrName;
 };
 //------------------------------------------------------------------------------
 // Legacy PM interface
