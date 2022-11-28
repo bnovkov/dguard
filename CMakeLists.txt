@@ -32,7 +32,7 @@ endif()
 # https://stackoverflow.com/questions/22140520/how-to-enable-assert-in-cmake-release-mode
 string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror -Wall -Wextra -Wpedantic")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Werror -Wall -Wextra -Wpedantic")
 
 
 if (${BUILD_AGAINST_PRECOMPILED_LLVM})
@@ -88,15 +88,15 @@ target_include_directories(
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
 
-add_library(dguard STATIC
-  ./src/lib/metadata_init.c
-  ./src/lib/dguard_funcs.c
-)
+#add_library(dguard STATIC
+#  ./src/lib/metadata_init.c
+#  ./src/lib/dguard_funcs.c
+#)
 
-target_include_directories(
-  dguard
-  PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/./include"
-)
+#target_include_directories(
+#  dguard
+#  PRIVATE
+#  "${CMAKE_CURRENT_SOURCE_DIR}/./include"
+#)
 
-target_link_libraries(dguard -ldl)
+#target_link_libraries(dguard -ldl)
