@@ -77,8 +77,6 @@ void DOPGuard::calculateMetadataType(llvm::Module &m) {
 
 /*
  * Takes a stack variable and replaces it with a LocalExec TLS variable.
- * Also defines a separate metadata variable that represents the TLS offset to
- * the promoted variable.
  */
 void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
   std::ostringstream varName;
@@ -277,7 +275,18 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
 }
 
 /*
- * Traverses each user of an isolated variable and instruments accordingly.
+ * Calculates instruction labels and group thresholds.
+ * The basis for calculation is a data-use graph constructed using use-def
+ * chains and the control flow graph.
+ */
+void DOPGuard::calculateLabels(void) {
+  /*
+   * TODO
+   */
+}
+
+/*
+ * Traverses each user of a DFI-protected variable and instruments accordingly.
  */
 void DOPGuard::instrumentIsolatedVars(void) {
   for (auto &g : isolatedVars) {
@@ -288,49 +297,6 @@ void DOPGuard::instrumentIsolatedVars(void) {
   }
 }
 
-void DOPGuard::emitModuleMetadata(llvm::Module &m) {
-  std::stringstream ss;
-  std::ofstream module_metadata_file;
-
-  ss << m.getName().str() << ".mtdt";
-
-  module_metadata_file.open(ss.str(), std::ios_base::out);
-
-  for (auto &g : isolatedVars) {
-    module_metadata_file << g->getName().str() << "\n";
-  }
-
-  module_metadata_file.close();
-}
-
-/*
- * Injects a call to a function that populates relevant runtime metadata.
- * The function call is performed immediately after entering main().
- */
-void DOPGuard::injectMetadataInitializer(llvm::Module &m) {
-  Function *main = m.getFunction("main");
-
-  FunctionType *metadata_init_ty;
-  Function *metadata_initF;
-  llvm::LLVMContext &ctx = m.getContext();
-
-  /* Bail if module does not contain main() */
-  if (main == nullptr)
-    return;
-
-  /* Declare int __tls_isol_metadata_init(void); */
-  metadata_init_ty =
-      FunctionType::get(IntegerType::getInt32Ty(ctx), /*IsVarArgs=*/false);
-  FunctionCallee metadata_init =
-      m.getOrInsertFunction("__tls_isol_metadata_init", metadata_init_ty);
-  metadata_initF = dyn_cast<Function>(metadata_init.getCallee());
-  metadata_initF->setDoesNotThrow();
-
-  /* Inject call to __tls_isol_metadata_init */
-  IRBuilder<> Builder(&*main->getEntryBlock().getFirstInsertionPt());
-  Builder.CreateCall(metadata_init);
-}
-
 bool DOPGuard::addPassPlugin(std::string name,
                              std::function<bool(llvm::Module &)> func) {
   return DOPGuard::pluginMap
@@ -339,6 +305,9 @@ bool DOPGuard::addPassPlugin(std::string name,
       .second;
 }
 
+/*
+ * LLVM pass boilerplate code.
+ */
 PreservedAnalyses DOPGuard::run(llvm::Module &M,
                                 llvm::ModuleAnalysisManager &) {
 
@@ -350,9 +319,6 @@ bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
   return Impl.runOnModule(M);
 }
 
-//-----------------------------------------------------------------------------
-// New PM Registration
-//-----------------------------------------------------------------------------
 llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dopg-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
@@ -373,9 +339,6 @@ llvmGetPassPluginInfo() {
   return getDOPGuardPluginInfo();
 }
 
-//-----------------------------------------------------------------------------
-// Legacy PM Registration
-//-----------------------------------------------------------------------------
 char LegacyDOPGuard::ID = 0;
 
 // Register the pass - required for (among others) opt
@@ -385,7 +348,7 @@ static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
                                       /*is_analysis=*/false);
 
 /*
- * Private class data
+ * Private class data initialization.
  */
 llvm::StringMap<std::function<bool(llvm::Module &)>> DOPGuard::pluginMap = {};
 std::vector<llvm::GlobalVariable *> DOPGuard::isolatedVars = {};
