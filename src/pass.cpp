@@ -48,7 +48,6 @@ bool DOPGuard::runOnModule(Module &M) {
     calculateMetadataType(M);
     createMetadataArray(M);
     instrumentIsolatedVars();
-    emitModuleMetadata(M);
   }
 
   return changed;
