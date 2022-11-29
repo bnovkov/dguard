@@ -71,6 +71,7 @@ void DOPGuard::createMetadataArray(llvm::Module &m) {
  */
 void DOPGuard::calculateMetadataType(llvm::Module &m) {
   LLVMContext &C = m.getContext();
+  // TODO: determine type size dynamically
   labelMetadataType = IntegerType::getInt64Ty(C);
 }
 
@@ -184,9 +185,10 @@ void DOPGuard::insertDFIInst(User *u) {
     /* Compare with threshold */
     // TODO: calculate and store thresholds in a
     // "ProtectedVar" wrapper class
+    long long loadThresh = getThreshold(i);
     Value *equal = builder.CreateICmpEQ(
-        distance,
-        dyn_cast<Value>(Constant::getNullValue(DOPGuard::labelMetadataType)));
+        distance, dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType,
+                                                   loadThresh)));
 
     /* Insert a conditional branch */
     builder.CreateCondBr(equal, old, abortBB);
@@ -217,7 +219,9 @@ void DOPGuard::insertDFIInst(User *u) {
 
     /* Store current label */
     // TODO: fetch labels from static store
-    builder.CreateStore(Constant::getNullValue(labelMetadataType), metadataPtr);
+    long long storeLabel = getThreshold(i);
+    builder.CreateStore(ConstantInt::get(labelMetadataType, storeLabel),
+                        metadataPtr);
   }
 }
 
@@ -282,6 +286,16 @@ void DOPGuard::calculateLabels(void) {
   /*
    * TODO
    */
+}
+
+long long DOPGuard::getLabel(Instruction *i) {
+  /* TODO: Implement when label calculation is done */
+  return 0;
+}
+
+long long DOPGuard::getThreshold(Instruction *loadI) {
+  /* TODO: Implement when label calculation is done */
+  return 0;
 }
 
 /*
