@@ -73,25 +73,21 @@ include(AddLLVM)
 
 include_directories(${LLVM_INCLUDE_DIRS})
 
-add_llvm_library(pass MODULE
+add_library(DOPGuard MODULE
   ./src/pass.cpp
-  ./src/plugins/dop.cpp
-  DEPENDS
-  intrinsics_gen
-  PLUGIN_TOOL
-  opt
+  ./src/plugins/func_list.cpp
 )
 
 target_include_directories(
-  pass
+  DOPGuard
   PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
 
-#add_library(dguard STATIC
+add_library(dguard STATIC
 #  ./src/lib/metadata_init.c
-#  ./src/lib/dguard_funcs.c
-#)
+  ./src/lib/dguard_funcs.c
+)
 
 #target_include_directories(
 #  dguard

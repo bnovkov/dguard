@@ -15,6 +15,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/IntrinsicsX86.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -40,8 +42,7 @@ bool DOPGuard::runOnModule(Module &M) {
     bool passChanged = it->second(M);
     changed = changed || passChanged;
 
-    LLVM_DEBUG(dbgs() << "pass " << it->first() << " returned " << passChanged
-                      << "\n");
+    dbgs() << "pass " << it->first() << " returned " << passChanged << "\n";
   }
 
   if (changed) {
@@ -78,39 +79,45 @@ void DOPGuard::calculateMetadataType(llvm::Module &m) {
 /*
  * Takes a stack variable and replaces it with a LocalExec TLS variable.
  */
+void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaInst *al) {
+  std::ostringstream varName;
+
+  BasicBlock::iterator ii(al);
+
+  const Function *f = al->getFunction();
+  if (f == nullptr) {
+    varName << al->getNameOrAsOperand() << allocaId;
+  } else {
+    varName << f->getNameOrAsOperand() << al->getNameOrAsOperand() << allocaId;
+  }
+
+  /* Declare the new "stack" variable */
+  GlobalVariable *alloca_global =
+      new GlobalVariable(m, al->getAllocatedType(), false,
+                         GlobalValue::InternalLinkage, // TODO: change to static
+                         nullptr, varName.str(), nullptr,
+                         GlobalValue::ThreadLocalMode::LocalExecTLSModel);
+
+  /* Set initializer */
+  UndefValue *allocaInitializer = UndefValue::get(al->getAllocatedType());
+  alloca_global->setInitializer(allocaInitializer);
+
+  ReplaceInstWithValue(al->getParent()->getInstList(), ii,
+                       dyn_cast<Value>(alloca_global));
+
+  isolatedVars.push_back(alloca_global);
+
+  varName.clear();
+  varName.str("");
+
+  allocaId++;
+}
+
 void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
   std::ostringstream varName;
 
   for (llvm::AllocaInst *al : *allocas) {
-    BasicBlock::iterator ii(al);
-    const Function *f = ii->getFunction();
-    if (f == nullptr) {
-      varName << ii->getNameOrAsOperand() << allocaId;
-    } else {
-      varName << f->getNameOrAsOperand() << ii->getNameOrAsOperand()
-              << allocaId;
-    }
-
-    /* Declare the new "stack" variable */
-    GlobalVariable *alloca_global = new GlobalVariable(
-        m, al->getAllocatedType(), false,
-        GlobalValue::InternalLinkage, // TODO: change to static
-        nullptr, varName.str(), nullptr,
-        GlobalValue::ThreadLocalMode::LocalExecTLSModel);
-
-    /* Set initializer */
-    UndefValue *allocaInitializer = UndefValue::get(al->getAllocatedType());
-    alloca_global->setInitializer(allocaInitializer);
-
-    ReplaceInstWithValue(al->getParent()->getInstList(), ii,
-                         dyn_cast<Value>(alloca_global));
-
-    isolatedVars.push_back(alloca_global);
-
-    varName.clear();
-    varName.str("");
-
-    allocaId++;
+    promoteToThreadLocal(m, al);
   }
 }
 
@@ -126,7 +133,6 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
 void DOPGuard::insertDFIInst(User *u) {
   Instruction *i, *predTerm;
   BasicBlock *old, *pred;
-  FunctionType *rdFSType;
   Value *loadStoreTargetPtr;
   BasicBlock *abortBB;
 
@@ -137,10 +143,7 @@ void DOPGuard::insertDFIInst(User *u) {
   Value *metadataArray = m->getGlobalVariable(DOPGuard::labelArrName);
 
   /* Fetch 'rdfsbase64' */
-  rdFSType = FunctionType::get(IntegerType::getInt64PtrTy(C), false);
-  FunctionCallee rdFS64 =
-      m->getOrInsertFunction("__builtin_ia32_rdfsbase64", rdFSType);
-
+  Function *rdFS64 = Intrinsic::getDeclaration(m, Intrinsic::x86_rdfsbase_64);
   if (isa<llvm::LoadInst>(i)) {
     loadStoreTargetPtr = i->getOperand(0);
 
@@ -298,6 +301,14 @@ long long DOPGuard::getThreshold(Instruction *loadI) {
   return 0;
 }
 
+bool DOPGuard::addPassPlugin(std::string name,
+                             std::function<bool(llvm::Module &)> func) {
+  return DOPGuard::pluginMap
+      .insert(std::pair<std::string, std::function<bool(llvm::Module &)>>(name,
+                                                                          func))
+      .second;
+}
+
 /*
  * Traverses each user of a DFI-protected variable and instruments accordingly.
  */
@@ -308,14 +319,6 @@ void DOPGuard::instrumentIsolatedVars(void) {
       insertDFIInst(*it);
     }
   }
-}
-
-bool DOPGuard::addPassPlugin(std::string name,
-                             std::function<bool(llvm::Module &)> func) {
-  return DOPGuard::pluginMap
-      .insert(std::pair<std::string, std::function<bool(llvm::Module &)>>(name,
-                                                                          func))
-      .second;
 }
 
 /*
@@ -335,14 +338,10 @@ bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
 llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dopg-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            PB.registerPipelineParsingCallback(
-                [](StringRef Name, ModulePassManager &MPM,
-                   ArrayRef<PassBuilder::PipelineElement>) {
-                  if (Name == "dopg-pass") {
-                    MPM.addPass(DOPGuard());
-                    return true;
-                  }
-                  return false;
+            PB.registerPipelineEarlySimplificationEPCallback(
+                [&](ModulePassManager &MPM, auto) {
+                  MPM.addPass(DOPGuard());
+                  return true;
                 });
           }};
 }
@@ -351,14 +350,6 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
   return getDOPGuardPluginInfo();
 }
-
-char LegacyDOPGuard::ID = 0;
-
-// Register the pass - required for (among others) opt
-static RegisterPass<LegacyDOPGuard> X(/*PassArg=*/"legacy-dopg-pass",
-                                      /*Name=*/"LegacyDOPGuard",
-                                      /*CFGOnly=*/false,
-                                      /*is_analysis=*/false);
 
 /*
  * Private class data initialization.

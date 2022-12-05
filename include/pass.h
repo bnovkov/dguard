@@ -22,12 +22,15 @@ public:
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &);
   bool runOnModule(llvm::Module &M);
 
+  static bool isRequired() { return true; }
+
   /*
    * Adds a static analysis/transformation pass function to the plugin map.
    * These run each time the 'runOnModule' method is invoked.
    */
   static bool addPassPlugin(std::string, std::function<bool(llvm::Module &)>);
   static void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas);
+  static void promoteToThreadLocal(llvm::Module &m, llvm::AllocaInst *al);
 
 private:
   /* Instrumentation helpers */
