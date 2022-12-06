@@ -10,7 +10,7 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 *.~undo-tree~
-
+__pycache__
 .cache
 build
 tests
