@@ -51,8 +51,6 @@ bool DOPGuard::runOnModule(Module &M) {
     calculateMetadataType(M);
     createMetadataArray(M);
     instrumentIsolatedVars();
-
-    // M.dump();
   }
 
   return changed;
@@ -169,11 +167,6 @@ void DOPGuard::insertDFIInst(User *u) {
 
     for (auto it = pred_begin(pred), et = pred_end(pred); it != et; ++it) {
       newPreds.insert(*it);
-    }
-
-    dbgs() << "SPLIT BLOCK PREDECESSORS\n";
-    for (auto it = pred_begin(pred), et = pred_end(pred); it != et; ++it) {
-      dbgs() << (*it)->getName() << "\n";
     }
 
     for (BasicBlock *bb : oldPreds) {
