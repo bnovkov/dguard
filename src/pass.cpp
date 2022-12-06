@@ -1,5 +1,6 @@
 
 #include "pass.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -19,6 +20,7 @@
 #include "llvm/IR/IntrinsicsX86.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <ios>
 #include <sstream>
@@ -49,6 +51,8 @@ bool DOPGuard::runOnModule(Module &M) {
     calculateMetadataType(M);
     createMetadataArray(M);
     instrumentIsolatedVars();
+
+    // M.dump();
   }
 
   return changed;
@@ -147,14 +151,54 @@ void DOPGuard::insertDFIInst(User *u) {
   if (isa<llvm::LoadInst>(i)) {
     loadStoreTargetPtr = i->getOperand(0);
 
+    SmallPtrSet<BasicBlock *, 10> oldPreds = {};
+    SmallPtrSet<BasicBlock *, 10> newPreds = {};
+
     old = i->getParent();
+    StringRef oldBlockName = old->getName();
+
+    for (auto it = pred_begin(old), et = pred_end(old); it != et; ++it) {
+      oldPreds.insert(*it);
+    }
     pred = SplitBlock(old, i, static_cast<DominatorTree *>(nullptr), nullptr,
                       nullptr, "",
                       /* before */ true);
     if (pred == nullptr) {
-      // debug
       abort();
     }
+
+    for (auto it = pred_begin(pred), et = pred_end(pred); it != et; ++it) {
+      newPreds.insert(*it);
+    }
+
+    dbgs() << "SPLIT BLOCK PREDECESSORS\n";
+    for (auto it = pred_begin(pred), et = pred_end(pred); it != et; ++it) {
+      dbgs() << (*it)->getName() << "\n";
+    }
+
+    for (BasicBlock *bb : oldPreds) {
+      if (newPreds.contains(bb))
+        continue;
+
+      /* SplitBlock failed to link all predecessors; do this manually */
+      Instruction *term = &bb->back();
+
+      if (BranchInst *bi = dyn_cast<BranchInst>(term)) {
+        if (bi->isUnconditional()) {
+          bi->setOperand(0, pred);
+        } else {
+          for (size_t i = 0; i < bi->getNumOperands(); i++) {
+            if (BasicBlock *bbop = dyn_cast<BasicBlock>(bi->getOperand(i))) {
+              if (oldBlockName.equals(bbop->getName())) {
+                bi->setOperand(i, pred);
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
     predTerm = &pred->back();
 
     /* Create abortBB */
@@ -176,7 +220,7 @@ void DOPGuard::insertDFIInst(User *u) {
         metadataArray->getType()->getScalarType()->getPointerElementType(),
         metadataArray,
         ArrayRef<Value *>({Constant::getNullValue(labelMetadataType),
-                           builder.CreateSub(targetPtrInt, TLSPtrInt)}));
+                           builder.CreateSub(TLSPtrInt, targetPtrInt)}));
 
     /* Fetch last label */
     Value *lastLabel =
@@ -211,8 +255,8 @@ void DOPGuard::insertDFIInst(User *u) {
                                               IntegerType::getInt64Ty(C));
 
     Value *index = builder.CreateSub(
-        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C)),
-        TLSPtrInt);
+        TLSPtrInt,
+        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C)));
 
     /* Index into label array */
     Value *metadataPtr = builder.CreateGEP(
@@ -316,7 +360,8 @@ void DOPGuard::instrumentIsolatedVars(void) {
   for (auto &g : isolatedVars) {
     GlobalVariable *isolVar = g;
     for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
-      insertDFIInst(*it);
+      if (isa<LoadInst>(*it) || isa<StoreInst>(*it))
+        insertDFIInst(*it);
     }
   }
 }
@@ -336,13 +381,23 @@ bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
 }
 
 llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "dopg-pass", LLVM_VERSION_STRING,
+  return {LLVM_PLUGIN_API_VERSION, "dguard-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
             PB.registerPipelineEarlySimplificationEPCallback(
                 [&](ModulePassManager &MPM, auto) {
                   MPM.addPass(DOPGuard());
                   return true;
                 });
+            /*          [](PassBuilder &PB) {
+                    PB.registerPipelineParsingCallback(
+                        [](StringRef Name, ModulePassManager &MPM,
+                           ArrayRef<PassBuilder::PipelineElement>) {
+                          if (Name == "dguard-pass") {
+                            MPM.addPass(DOPGuard());
+                            return true;
+                          }
+                          return false;
+                        });*/
           }};
 }
 
@@ -359,3 +414,4 @@ std::vector<llvm::GlobalVariable *> DOPGuard::isolatedVars = {};
 int DOPGuard::allocaId = 0;
 const std::string DOPGuard::labelArrName = "__dguard_label_arr";
 llvm::Type *DOPGuard::labelMetadataType = nullptr;
+llvm::ValueMap<llvm::Value *, long long> DOPGuard::labelStore{};

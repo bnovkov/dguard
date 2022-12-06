@@ -12,7 +12,9 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Debug.h"
+#include <cstddef>
 #include <llvm/ADT/StringRef.h>
+#include "llvm/Demangle/Demangle.h"
 
 using namespace llvm;
 
@@ -29,10 +31,19 @@ public:
     AllocaVec allocasToBePromoted;
 
     for (auto &Func : M) {
-      if (!funcnameSet.contains(Func.getName())) {
+      std::string fnameDemangled = llvm::demangle(Func.getName().str());
+
+      /* Check for arg types in demangled fname */
+      size_t bracketPos = fnameDemangled.find_first_of('(');
+      if (bracketPos != std::string::npos) {
+        fnameDemangled = fnameDemangled.substr(0, bracketPos);
+      }
+      dbgs() << "Function " << fnameDemangled << "\n";
+
+      if (!funcnameSet.contains(fnameDemangled)) {
         continue;
       }
-      dbgs() << "Function " << Func.getName() << "found\n";
+      dbgs() << "Function " << fnameDemangled << " found\n";
       /* Promote each stack variable */
       for (auto &BB : Func) {
         for (BasicBlock::iterator inst = BB.begin(), IE = BB.end(); inst != IE;
@@ -77,6 +88,7 @@ StringSet<> FuncListPlugin::funcnameSet{
     "CSHIFT",                                /* splash2x.water_* */
     "INTERF",                                /* splash2x.water */
     "MDMAIN",                                /* splash2x.water */
+    "fooa",
 };
 
 REGISTER_PASS_PLUGIN(funclist, FuncListPlugin::runOnModule);
