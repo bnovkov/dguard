@@ -1,5 +1,4 @@
 
-#include "plugin.hpp"
 
 #include "llvm/ADT/None.h"
 #include "llvm/IR/Constants.h"
@@ -66,6 +65,8 @@ public:
             if (!f) // check for indirect call
               continue;
             StringRef name = f->getName();
+            LLVM_DEBUG(dbgs() << "NAME " << name << "\n");
+
             if (funcSymbolDispatchMap.count(name)) {
               funcSymbolDispatchMap[name](cb, &vulnAllocas);
             }
@@ -123,4 +124,4 @@ llvm::StringMap<std::function<void(llvm::CallBase *, AllocaVec *)>>
          }},
 };
 
-REGISTER_PASS_PLUGIN("dop", DOPPassPlugin::runOnModule);
+REGISTER_PASS_PLUGIN(dop, DOPPassPlugin::runOnModule);

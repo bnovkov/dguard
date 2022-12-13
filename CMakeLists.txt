@@ -32,7 +32,7 @@ endif()
 # https://stackoverflow.com/questions/22140520/how-to-enable-assert-in-cmake-release-mode
 string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Werror -Wall -Wextra -Wpedantic")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Werror -Wall -Wextra -Wpedantic -fno-rtti")
 
 
 if (${BUILD_AGAINST_PRECOMPILED_LLVM})
@@ -73,25 +73,21 @@ include(AddLLVM)
 
 include_directories(${LLVM_INCLUDE_DIRS})
 
-add_llvm_library(pass MODULE
+add_library(DOPGuard MODULE
   ./src/pass.cpp
-  ./src/plugins/dop.cpp
-  DEPENDS
-  intrinsics_gen
-  PLUGIN_TOOL
-  opt
+  ./src/plugins/func_list.cpp
 )
 
 target_include_directories(
-  pass
+  DOPGuard
   PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
 
-#add_library(dguard STATIC
+add_library(dguard STATIC
 #  ./src/lib/metadata_init.c
-#  ./src/lib/dguard_funcs.c
-#)
+  ./src/lib/dguard_funcs.c
+)
 
 #target_include_directories(
 #  dguard
