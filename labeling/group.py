@@ -3,13 +3,14 @@ from random import sample
 
 LABEL_SIZE = 10
 def int2bin(number):
-    return '{0:010b}'.format(number)
+    
+    return '{0:032b}'.format(int(number))
 
 class System:
     def __init__(self, loadNodes, storeNodes):
         self.groups = [Group(i, []) for i in range(loadNodes)]
         self.labelCounter = 1
-        self.usedLabels = []
+        
         for i in range(storeNodes):
             node = Element(i)
             #print("kreiran element", node)
@@ -23,8 +24,18 @@ class System:
                 self.groups[j].add(node)
                 #print("nakon dodavanja\n", self.groups[j])
 
-
-
+    def __init__(self, file):
+        self.groups = {}
+        self.labelCounter = 1
+        nodes = {}
+        for i, line in enumerate(file.readlines()):
+            elements = line.strip().split(" ")
+            self.groups[i] = Group(i, [])
+           
+            for j in range(len(elements)):
+                if(elements[j] not in nodes.keys()):
+                    nodes[elements[j]] = Element(elements[j])
+                self.groups[i].add(nodes[elements[j]])
 
     def testHammingDistance(self, num, labels):
         hammingTest = self.hammingDistance(num, labels[0])
@@ -46,7 +57,7 @@ class System:
             return True
         count = int2bin(labels[0]).count("1") % 2
         for label in labels:
-            if(int2bin(labels[0]).count("1") % 2 != count): return False
+            if(int2bin(label).count("1") % 2 != count): return False
         while(True):
             i = self.generateLabel()
             if(not self.testHammingDistance(i, labels)): continue
@@ -55,40 +66,62 @@ class System:
             return True
 
     def generateGroupElementsLabel(self, group):
-        
+        usedLabels = []
         for element in group.elements:
             if(element.label != ''): continue
+            #print("trazin label za element {}". format(element.id))
             i = 1
             while(True):
                 newLabel = int(int2bin(i) + int2bin(group.mainElement.label), 2)
                 
-                if(newLabel in self.usedLabels or self.hammingDistance(newLabel, group.mainElement.label) != group.treshold): 
+                if(newLabel in usedLabels or self.hammingDistance(newLabel, group.mainElement.label) != group.treshold): 
                     i += 1
                     continue
-                self.usedLabels.append(newLabel)
+                #print("pronaden novi label za node {}: {}".format(element.id, newLabel))
+                #print("++++++++++++")
+                usedLabels.append(newLabel)
                 element.setLabel(newLabel)
                 break
 
+    def resetLabels(self, group):
+        for element in group.elements:
+            elementsMainLabel = int(int2bin(element.label)[32:],2)
+            print(elementsMainLabel, group.mainElement.label)
+            if(elementsMainLabel^group.mainElement.label == 0):
+                element.label = ''
+        group.mainElement.label = ''
 
     def labelGraph(self):
         
         repetition = len(self.groups)
-        print(repetition)
+        smallestIndexPrev = -1
         for j in range(repetition):
             smallestIndex = -1
             smallestSize = -1
-            for i, group in enumerate(self.groups):
-                if(smallestSize == -1 or (smallestSize > len(group.elements) and group.mainElement.label == '')):
+            for i, group in enumerate(self.groups.values()):
+                if((smallestSize == -1 or smallestSize > len(group.elements)) and group.mainElement.label == ''):
                     smallestIndex = i
                     smallestSize = len(group.elements)
+            print("Pronadena nova grupa za oznacavanje {}".format(smallestIndex))
             
-            if(not self.generateGroupLabel(self.groups[smallestIndex])):
-                print("nemoguce")
-                return 1
+            smallestIndexPrev = smallestIndex
             self.generateGroupElementsLabel(self.groups[smallestIndex])
         
 
-
+    def labelGraph(self, index):
+        if(index >= len(self.groups)): return True
+        while(True):
+            if(not self.generateGroupLabel(self.groups[index])):
+                #TODO backtrack nije dobar moram se evratiti x koraka unazad ne nuzno samo 1 korak
+                # smisli kako...
+                return False
+            else:
+                self.generateGroupElementsLabel(self.groups[index])
+                if(self.labelGraph(index + 1)):
+                    break
+                else:
+                    self.resetLabels(self.groups[index])
+        return True
 
     def hammingDistance(self, num1, num2):
         return(bin(num1^num2).count("1"))
@@ -105,7 +138,7 @@ class System:
         usedElements = []
         extraConnections = []
         ret = 'digraph G{\n'
-        for group in self.groups:
+        for group in self.groups.values():
             ret += "\tsubgraph cluster_{0} {{\n".format(int2bin((group.mainElement.label)))
             ret +="\t\tstyle=filled;\n\t\tcolor=lightgrey;\n\t\tnode [style=filled,color=white];\n"
             for element in group.elements:
@@ -121,7 +154,15 @@ class System:
             ret += "\t{} -> {};\n".format(connection[1], connection[0])
         ret += "}"
         return ret
-
+    def toString(self):
+        
+        for group in self.groups.values():
+            print(group.mainElement)
+            ret = "\t"
+            for element in group.elements:
+                ret += str(element.id) + " "
+            print(ret)
+                
 class Group:
     def __init__(self, id, elements = []):
         self.mainElement = Element(id)
@@ -149,14 +190,11 @@ def invertedNumber(num):
     return int(num2, 2)
 if __name__=='__main__':
 
+    file = open(r'C:\Users\Antonio\Desktop\dopguard\dopguard\labeling\graph.txt', "r")
+    system = System(file)
     
-    system = System(4, 7)
+    system.labelGraph(0)
 
-    system.labelGraph()
-    for group in system.groups:
-        print(group.mainElement.id, group.mainElement.label )
-        for element in group.elements:
-            print("\t", element.id , element.label, ",")
     print(system)
 
     
