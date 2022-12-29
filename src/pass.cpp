@@ -12,6 +12,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Use.h"
+#include "llvm/IR/Value.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
@@ -33,11 +34,23 @@ using namespace llvm;
 
 #define DEBUG_TYPE "dguard-pass"
 
+static cl::opt<std::string> scheme("scheme", cl::init("hamming"),
+                                   cl::desc("The desired DFI scheme"),
+                                   cl::value_desc("DFI scheme"));
+
 /*
  * Runs all defined static analysis plugins on a module.
  */
 bool DOPGuard::runOnModule(Module &M) {
   bool changed = false;
+  dfiSchemeFType *instF;
+
+  if (schemeMap.count(scheme)) {
+    instF = schemeMap[scheme];
+  } else {
+    dbgs() << "Unknown DFI scheme '" << scheme << "' requested; exiting\n";
+    return false;
+  }
 
   for (auto it = DOPGuard::pluginMap.begin(); it != DOPGuard::pluginMap.end();
        it++) {
@@ -50,7 +63,7 @@ bool DOPGuard::runOnModule(Module &M) {
   if (changed) {
     calculateMetadataType(M);
     createMetadataArray(M);
-    instrumentIsolatedVars();
+    instrumentIsolatedVars(instF);
   }
 
   return changed;
@@ -132,22 +145,23 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
  * The target BasicBlock is split before the instruction "u" and the instruction
  * block is appended to the newly created, preceding BB.
  */
-void DOPGuard::insertDFIInst(User *u) {
+void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
   Instruction *i, *predTerm;
   BasicBlock *old, *pred;
-  Value *loadStoreTargetPtr;
+  //   Value *loadStoreTargetPtr;
   BasicBlock *abortBB;
 
   i = dyn_cast<llvm::Instruction>(u);
 
   Module *m = i->getModule();
-  LLVMContext &C = u->getContext();
+  // LLVMContext &C = u->getContext();
   Value *metadataArray = m->getGlobalVariable(DOPGuard::labelArrName);
 
   /* Fetch 'rdfsbase64' */
-  Function *rdFS64 = Intrinsic::getDeclaration(m, Intrinsic::x86_rdfsbase_64);
+  //  Function *rdFS64 = Intrinsic::getDeclaration(m,
+  //  Intrinsic::x86_rdfsbase_64);
   if (isa<llvm::LoadInst>(i)) {
-    loadStoreTargetPtr = i->getOperand(0);
+    //    loadStoreTargetPtr = i->getOperand(0);
 
     SmallPtrSet<BasicBlock *, 10> oldPreds = {};
     SmallPtrSet<BasicBlock *, 10> newPreds = {};
@@ -201,34 +215,38 @@ void DOPGuard::insertDFIInst(User *u) {
     builder.SetInsertPoint(predTerm);
 
     /* Get TLS block addr */
-    CallInst *rdFSInst = builder.CreateCall(rdFS64);
-    Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
-                                              IntegerType::getInt64Ty(C));
+    //    CallInst *rdFSInst = builder.CreateCall(rdFS64);
+    // Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
+    //                                          IntegerType::getInt64Ty(C));
     /* Fetch target address */
-    Value *targetPtrInt =
-        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C));
+    // Value *targetPtrInt =
+    //  builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C));
 
     /* Index into label array */
     Value *metadataPtr = builder.CreateGEP(
         metadataArray->getType()->getScalarType()->getPointerElementType(),
         metadataArray,
         ArrayRef<Value *>({Constant::getNullValue(labelMetadataType),
-                           builder.CreateSub(TLSPtrInt, targetPtrInt)}));
+                           ConstantInt::get(labelMetadataType, 0)}));
 
     /* Fetch last label */
     Value *lastLabel =
         builder.CreateLoad(DOPGuard::labelMetadataType, metadataPtr);
 
-    /* Calculate distance metric */
-    Value *distance = builder.CreateXor(lastLabel, lastLabel);
+    // /* Calculate distance metric */
+    // Value *distance = builder.CreateXor(lastLabel, lastLabel);
 
-    /* Compare with threshold */
-    // TODO: calculate and store thresholds in a
-    // "ProtectedVar" wrapper class
-    long long loadThresh = getThreshold(i);
-    Value *equal = builder.CreateICmpEQ(
-        distance, dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType,
-                                                   loadThresh)));
+    // /* Compare with threshold */
+    // // TODO: calculate and store thresholds in a
+    // // "ProtectedVar" wrapper class
+    // long long loadThresh = getThreshold(i);
+    // Value *equal = builder.CreateICmpEQ(
+    //     distance,
+    //     dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType,
+    //                                                loadThresh)));
+
+    /* Instrument according to selected DFI scheme */
+    Value *equal = instF(builder, lastLabel, i);
 
     /* Insert a conditional branch */
     builder.CreateCondBr(equal, old, abortBB);
@@ -237,25 +255,27 @@ void DOPGuard::insertDFIInst(User *u) {
     pred->getTerminator()->eraseFromParent();
 
   } else if (isa<llvm::StoreInst>(i)) {
-    loadStoreTargetPtr = i->getOperand(1);
+    // loadStoreTargetPtr = i->getOperand(1);
 
     IRBuilder<> builder(i->getParent());
     builder.SetInsertPoint(i);
 
     /* Get TLS block addr */
-    CallInst *rdFSInst = builder.CreateCall(rdFS64);
-    Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
-                                              IntegerType::getInt64Ty(C));
+    //  CallInst *rdFSInst = builder.CreateCall(rdFS64);
+    // Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
+    //                                          IntegerType::getInt64Ty(C));
 
-    Value *index = builder.CreateSub(
-        TLSPtrInt,
-        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C)));
+    //    Value *index = builder.CreateSub(
+    //   TLSPtrInt,
+    //   builder.CreatePtrToInt(loadStoreTargetPtr,
+    //   IntegerType::getInt64Ty(C)));
 
     /* Index into label array */
     Value *metadataPtr = builder.CreateGEP(
         metadataArray->getType()->getScalarType()->getPointerElementType(),
         metadataArray,
-        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType), index}));
+        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType),
+                           ConstantInt::get(labelMetadataType, 0)}));
 
     /* Store current label */
     // TODO: fetch labels from static store
@@ -349,16 +369,39 @@ bool DOPGuard::addPassPlugin(std::string name,
 /*
  * Traverses each user of a DFI-protected variable and instruments accordingly.
  */
-void DOPGuard::instrumentIsolatedVars(void) {
+void DOPGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
   for (auto &g : isolatedVars) {
     GlobalVariable *isolVar = g;
     for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
       if (isa<LoadInst>(*it) || isa<StoreInst>(*it))
-        insertDFIInst(*it);
+        insertDFIInst(*it, instF);
     }
   }
 }
 
+Value *DOPGuard::hammingInst(IRBuilder<> &builder, Value *lastLabel,
+                             Instruction *i) {
+  /* Calculate distance metric */
+  Value *distance = builder.CreateXor(lastLabel, lastLabel);
+
+  /* Compare with threshold */
+  // TODO: calculate and store thresholds in a
+  // "ProtectedVar" wrapper class
+  long long loadThresh = getThreshold(i);
+  return builder.CreateICmpEQ(
+      distance, dyn_cast<Value>(
+                    ConstantInt::get(DOPGuard::labelMetadataType, loadThresh)));
+}
+
+Value *DOPGuard::primeInst(IRBuilder<> &builder, Value *lastLabel,
+                           Instruction *i) {
+  return nullptr;
+}
+
+Value *DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel,
+                         Instruction *i) {
+  return nullptr;
+}
 /*
  * LLVM pass boilerplate code.
  */
@@ -408,3 +451,9 @@ int DOPGuard::allocaId = 0;
 const std::string DOPGuard::labelArrName = "__dguard_label_arr";
 llvm::Type *DOPGuard::labelMetadataType = nullptr;
 llvm::ValueMap<llvm::Value *, long long> DOPGuard::labelStore{};
+
+llvm::StringMap<dfiSchemeFType *> DOPGuard::schemeMap = {
+    {"dfi", dfiInst},
+    {"hamming", hammingInst},
+    {"prime", primeInst},
+};

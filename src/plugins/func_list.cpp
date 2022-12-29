@@ -38,11 +38,11 @@ public:
       if (bracketPos != std::string::npos) {
         fnameDemangled = fnameDemangled.substr(0, bracketPos);
       }
-      dbgs() << "Function " << fnameDemangled << "\n";
 
       if (!funcnameSet.contains(fnameDemangled)) {
         continue;
       }
+
       dbgs() << "Function " << fnameDemangled << " found\n";
       /* Promote each stack variable */
       for (auto &BB : Func) {
@@ -66,28 +66,25 @@ public:
 };
 
 StringSet<> FuncListPlugin::funcnameSet{
-    "BlkSchlsEqEuroNoDiv",                   /* blackscholes */
-    "ComputeForcesMT",                       /* fluidanimate */
-    "ComputeDensitiesMT",                    /* fluidanimate */
-    "pgain",                                 /* streamcluster */
-    "HJM_SimPath_Forward_Blocking",          /* swaptions */
-    "CumNormalInv",                          /* swaptions */
-    "conv_gen",                              /* vips */
-    "vips_interpolate_bilinear_interpolate", /* vips */
-    "lintran_gen",                           /* vips */
-    "walksub",                               /* splash2x.barnes */
-    "gravsub",                               /* splash2x.barnes */
-    "ModifyTwoBySupernodeB",                 /* splash2x.cholesky */
-    "FillIn",                                /* splash2x.cholesky */
-    "FFT1DOnce",                             /* splash2x.fft */
-    "Transpose",                             /* splash2x.fft */
-    "lu",                                    /* splash2x.lu_* */
-    "relax",                                 /* splash2x.ocean_cp */
-    "subdivide_element",                     /* splash2x.radiosity */
-    "init",                                  /* splash2x.radix */
-    "CSHIFT",                                /* splash2x.water_* */
-    "INTERF",                                /* splash2x.water */
-    "MDMAIN",                                /* splash2x.water */
+    "BlkSchlsEqEuroNoDiv", /* blackscholes */
+    "ComputeForcesMT",     /* fluidanimate */
+    //    "ComputeDensitiesMT",                    /* fluidanimate */
+    "pgain",                        /* streamcluster */
+    "HJM_SimPath_Forward_Blocking", /* swaptions */
+    //    "CumNormalInv",                          /* swaptions */
+    "walksub", /* splash2x.barnes */
+    //    "gravsub",                               /* splash2x.barnes */
+    "ModifyTwoBySupernodeB", /* splash2x.cholesky */
+    //    "FillIn",                                /* splash2x.cholesky */
+    "FFT1DOnce", /* splash2x.fft */
+    //    "Transpose",                             /* splash2x.fft */
+    "lu",                /* splash2x.lu_* */
+    "relax",             /* splash2x.ocean_cp */
+    "subdivide_element", /* splash2x.radiosity */
+    "init",              /* splash2x.radix */
+    "CSHIFT",            /* splash2x.water_* */
+    //    "INTERF",                                /* splash2x.water */
+    //    "MDMAIN",                                /* splash2x.water */
     "fooa",
 };
 

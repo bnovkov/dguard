@@ -84,7 +84,7 @@ target_include_directories(
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
 
-add_library(dguard STATIC
+add_library(dguard SHARED
 #  ./src/lib/metadata_init.c
   ./src/lib/dguard_funcs.c
 )

@@ -11,9 +11,11 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ValueMap.h"
 #include "llvm/Pass.h"
+#include "llvm/IR/IRBuilder.h"
 
 typedef llvm::SmallVector<llvm::AllocaInst *, 32> AllocaVec;
-
+typedef llvm::Value *dfiSchemeFType(llvm::IRBuilder<> &, llvm::Value *,
+                                    llvm::Instruction *);
 //------------------------------------------------------------------------------
 // New PM interface
 //------------------------------------------------------------------------------
@@ -34,8 +36,8 @@ public:
 
 private:
   /* Instrumentation helpers */
-  static void instrumentIsolatedVars(void);
-  static void insertDFIInst(llvm::User *u);
+  static void instrumentIsolatedVars(dfiSchemeFType instF);
+  static void insertDFIInst(llvm::User *u, dfiSchemeFType instF);
   static void createMetadataArray(llvm::Module &m);
   static void calculateMetadataType(llvm::Module &m);
   static llvm::BasicBlock *createAbortCallBB(llvm::Module *m,
@@ -46,13 +48,19 @@ private:
   static long long getLabel(llvm::Instruction *i);
   static long long getThreshold(llvm::Instruction *loadI);
 
+  /* Different DFI schemes */
+  static dfiSchemeFType hammingInst;
+  static dfiSchemeFType primeInst;
+  static dfiSchemeFType dfiInst;
   static int allocaId;
+
   static std::vector<llvm::GlobalVariable *> isolatedVars;
   static llvm::StringMap<std::function<bool(llvm::Module &)>> pluginMap;
   static llvm::Type *labelMetadataType;
   static llvm::ValueMap<llvm::Value *, long long> labelStore;
 
   static const std::string labelArrName;
+  static llvm::StringMap<dfiSchemeFType *> schemeMap;
 };
 //------------------------------------------------------------------------------
 // Legacy PM interface
