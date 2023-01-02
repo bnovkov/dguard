@@ -172,6 +172,7 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     for (auto it = pred_begin(old), et = pred_end(old); it != et; ++it) {
       oldPreds.insert(*it);
     }
+
     pred = SplitBlock(old, i, static_cast<DominatorTree *>(nullptr), nullptr,
                       nullptr, "",
                       /* before */ true);
@@ -246,11 +247,10 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     //                                                loadThresh)));
 
     /* Instrument according to selected DFI scheme */
-    Value *equal = instF(builder, lastLabel, i);
+    instF(builder, lastLabel, i, old, abortBB);
 
     /* Insert a conditional branch */
-    builder.CreateCondBr(equal, old, abortBB);
-
+    // builder.CreateCondBr(equal, old, abortBB);
     /* Erase unconditional branch placed by SplitBlock */
     pred->getTerminator()->eraseFromParent();
 
@@ -379,8 +379,9 @@ void DOPGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
   }
 }
 
-Value *DOPGuard::hammingInst(IRBuilder<> &builder, Value *lastLabel,
-                             Instruction *i) {
+void DOPGuard::hammingInst(IRBuilder<> &builder, Value *lastLabel,
+                           Instruction *i, BasicBlock *old,
+                           BasicBlock *abortBB) {
   /* Calculate distance metric */
   Value *distance = builder.CreateXor(lastLabel, lastLabel);
 
@@ -388,19 +389,63 @@ Value *DOPGuard::hammingInst(IRBuilder<> &builder, Value *lastLabel,
   // TODO: calculate and store thresholds in a
   // "ProtectedVar" wrapper class
   long long loadThresh = getThreshold(i);
-  return builder.CreateICmpEQ(
+  Value *equal = builder.CreateICmpEQ(
       distance, dyn_cast<Value>(
                     ConstantInt::get(DOPGuard::labelMetadataType, loadThresh)));
+
+  builder.CreateCondBr(equal, old, abortBB);
 }
 
-Value *DOPGuard::primeInst(IRBuilder<> &builder, Value *lastLabel,
-                           Instruction *i) {
-  return nullptr;
+void DOPGuard::primeInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
+                         BasicBlock *old, BasicBlock *abortBB) {
+
+  Value *rem = builder.CreateURem(
+      lastLabel, ConstantInt::get(DOPGuard::labelMetadataType, 14));
+
+  assert(rem != nullptr);
+
+  if (rem == nullptr) {
+    abort();
+  }
+
+  Value *equal = builder.CreateICmpEQ(
+      rem, dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType, 0)));
+
+  builder.CreateCondBr(equal, old, abortBB);
 }
 
-Value *DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel,
-                         Instruction *i) {
-  return nullptr;
+void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
+                       BasicBlock *old, BasicBlock *abortBB) {
+  int numblocks = 0;
+  SmallVector<BasicBlock *, 10> blocks = {};
+  BasicBlock *pred = old->getSinglePredecessor();
+
+  Value *target = i->getOperand(0);
+  for (auto it = target->user_begin(); it != target->user_end(); it++) {
+    if (isa<StoreInst>(*it))
+      numblocks++;
+  }
+
+  blocks.push_back(pred);
+  for (int j = 0; j < (numblocks - 1); j++) {
+    blocks.push_back(BasicBlock::Create(i->getParent()->getContext(), "",
+                                        i->getFunction(), nullptr));
+  }
+  blocks.push_back(abortBB);
+
+  /* Link each block in the compare-branch chain, starting from the last to the
+   * first */
+  for (size_t j = 0; j < (blocks.size() - 1); j++) {
+    BasicBlock *bb = blocks[j];
+    IRBuilder<> curBuilder(bb);
+
+    if (bb->size() != 0)
+      curBuilder.SetInsertPoint(&bb->back());
+
+    Value *equal = curBuilder.CreateICmpEQ(
+        lastLabel, ConstantInt::get(DOPGuard::labelMetadataType, j));
+    curBuilder.CreateCondBr(equal, old, blocks[j + 1]);
+  }
 }
 /*
  * LLVM pass boilerplate code.

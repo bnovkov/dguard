@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "llvm/ADT/StringMap.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instruction.h"
@@ -14,8 +15,9 @@
 #include "llvm/IR/IRBuilder.h"
 
 typedef llvm::SmallVector<llvm::AllocaInst *, 32> AllocaVec;
-typedef llvm::Value *dfiSchemeFType(llvm::IRBuilder<> &, llvm::Value *,
-                                    llvm::Instruction *);
+typedef void dfiSchemeFType(llvm::IRBuilder<> &, llvm::Value *,
+                            llvm::Instruction *, llvm::BasicBlock *,
+                            llvm::BasicBlock *);
 //------------------------------------------------------------------------------
 // New PM interface
 //------------------------------------------------------------------------------
