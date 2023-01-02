@@ -431,12 +431,12 @@ void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
     blocks.push_back(BasicBlock::Create(i->getParent()->getContext(), "",
                                         i->getFunction(), nullptr));
   }
-  blocks.push_back(abortBB);
 
   /* Link each block in the compare-branch chain, starting from the last to the
    * first */
-  for (size_t j = 0; j < (blocks.size() - 1); j++) {
-    BasicBlock *bb = blocks[j];
+  BasicBlock *falseTgt = abortBB;
+  for (int j = 0; j < numblocks; j++) {
+    BasicBlock *bb = blocks.back();
     IRBuilder<> curBuilder(bb);
 
     if (bb->size() != 0)
@@ -444,7 +444,10 @@ void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
 
     Value *equal = curBuilder.CreateICmpEQ(
         lastLabel, ConstantInt::get(DOPGuard::labelMetadataType, j));
-    curBuilder.CreateCondBr(equal, old, blocks[j + 1]);
+    curBuilder.CreateCondBr(equal, old, falseTgt);
+
+    falseTgt = bb;
+    blocks.pop_back();
   }
 }
 /*
