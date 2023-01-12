@@ -54,6 +54,8 @@ public:
           }
         }
       }
+      dbgs() << "Promoted " << allocasToBePromoted.size()
+             << " allocas in function " << fnameDemangled << "\n";
     }
 
     if (allocasToBePromoted.size() != 0) {
@@ -86,6 +88,9 @@ StringSet<> FuncListPlugin::funcnameSet{
     //    "INTERF",                                /* splash2x.water */
     //    "MDMAIN",                                /* splash2x.water */
     "fooa",
+    "ngx_http_read_discarded_request_body",
+    "ngx_http_parse_chunked",
+    "ngx_http_discard_request_body_filter",
 };
 
 REGISTER_PASS_PLUGIN(funclist, FuncListPlugin::runOnModule);

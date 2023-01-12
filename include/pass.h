@@ -3,6 +3,8 @@
 #include <functional>
 #include <vector>
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/GlobalValue.h"
@@ -49,6 +51,7 @@ private:
   static void calculateLabels(void);
   static long long getLabel(llvm::Instruction *i);
   static long long getThreshold(llvm::Instruction *loadI);
+  static void calculateRDS(void);
 
   /* Different DFI schemes */
   static dfiSchemeFType hammingInst;
@@ -60,6 +63,9 @@ private:
   static llvm::StringMap<std::function<bool(llvm::Module &)>> pluginMap;
   static llvm::Type *labelMetadataType;
   static llvm::ValueMap<llvm::Value *, long long> labelStore;
+
+  static llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> loadToStoreMap;
+  static llvm::DenseMap<llvm::StoreInst *, std::set<llvm::LoadInst *>> rds;
 
   static const std::string labelArrName;
   static llvm::StringMap<dfiSchemeFType *> schemeMap;

@@ -1,6 +1,8 @@
 
 #include "pass.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -19,6 +21,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/IntrinsicsX86.h"
+#include "llvm/ADT/SetOperations.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -63,6 +66,7 @@ bool DOPGuard::runOnModule(Module &M) {
   if (changed) {
     calculateMetadataType(M);
     createMetadataArray(M);
+    calculateLabels();
     instrumentIsolatedVars(instF);
   }
 
@@ -148,7 +152,7 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
 void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
   Instruction *i, *predTerm;
   BasicBlock *old, *pred;
-  //   Value *loadStoreTargetPtr;
+  // Value *loadStoreTargetPtr;
   BasicBlock *abortBB;
 
   i = dyn_cast<llvm::Instruction>(u);
@@ -161,7 +165,6 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
   //  Function *rdFS64 = Intrinsic::getDeclaration(m,
   //  Intrinsic::x86_rdfsbase_64);
   if (isa<llvm::LoadInst>(i)) {
-    //    loadStoreTargetPtr = i->getOperand(0);
 
     SmallPtrSet<BasicBlock *, 10> oldPreds = {};
     SmallPtrSet<BasicBlock *, 10> newPreds = {};
@@ -245,15 +248,24 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     //     distance,
     //     dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType,
     //                                                loadThresh)));
+    assert(loadToStoreMap.count(dyn_cast<LoadInst>(i)) > 0);
+    StoreInst *si = loadToStoreMap[dyn_cast<LoadInst>(i)];
+    assert(rds.count(si) > 0);
 
-    /* Instrument according to selected DFI scheme */
-    instF(builder, lastLabel, i, old, abortBB);
+    if (rds[si].size() > 1) {
+      /* Instrument according to selected DFI scheme */
+      instF(builder, lastLabel, i, old, abortBB);
+    } else {
+      Value *equal = builder.CreateICmpEQ(
+          dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType, 0)),
+          dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType, 0)));
 
+      builder.CreateCondBr(equal, old, abortBB);
+    }
     /* Insert a conditional branch */
     // builder.CreateCondBr(equal, old, abortBB);
     /* Erase unconditional branch placed by SplitBlock */
     pred->getTerminator()->eraseFromParent();
-
   } else if (isa<llvm::StoreInst>(i)) {
     // loadStoreTargetPtr = i->getOperand(1);
 
@@ -337,16 +349,162 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
   return BB;
 }
 
+using DefSet = std::set<StoreInst *>;
+using BBDefMap = DenseMap<const BasicBlock *, DefSet>;
+using VarDefMap = DenseMap<const GlobalVariable *, DefSet>;
+using Worklist = SmallVector<const BasicBlock *, 10>;
+
+/*
+ * Runs Reaching Definitions Analysis for protected variables and calculates
+ * the RDS.
+ */
+void DOPGuard::calculateRDS(void) {
+
+  SmallVector<Function *, 5> funcs;
+
+  /* Collect each function where the protected var has users */
+  for (auto &g : isolatedVars) {
+    GlobalVariable *isolVar = g;
+    for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
+      if (isa<LoadInst>(*it) || isa<StoreInst>(*it)) {
+        funcs.push_back((dyn_cast<Instruction>(*it))->getFunction());
+      }
+    }
+  }
+
+  for (Function *f : funcs) {
+    BBDefMap gens;
+    BBDefMap kills;
+    BBDefMap out;
+    BBDefMap in;
+    VarDefMap allDefs;
+
+    /* Collect all defs for variables in f */
+    for (GlobalVariable *isolVar : isolatedVars) {
+      allDefs.insert(std::make_pair(isolVar, std::set<StoreInst *>()));
+      for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
+        if (StoreInst *si = dyn_cast<StoreInst>(*it)) {
+          if (si->getFunction() == f) {
+            allDefs[isolVar].insert(si);
+          }
+        }
+      }
+    }
+
+    /* Collect GEN and KILL for each variable and BB */
+    for (GlobalVariable *g : isolatedVars) {
+      if (allDefs[g].size() == 0) {
+        continue;
+      }
+
+      for (BasicBlock &bi : *f) {
+        BasicBlock *bb = &bi;
+        gens.insert(std::make_pair(bb, DefSet()));
+
+        for (Instruction &ii : bi) {
+          if (StoreInst *si = dyn_cast<StoreInst>(&ii)) {
+            if (GlobalVariable *gv =
+                    dyn_cast<GlobalVariable>(si->getPointerOperand())) {
+              if (gv == g) {
+                gens[bb].insert(si);
+              }
+            }
+          }
+        }
+
+        /* Calculate KILL set; Defs(g) - GEN(bb) */
+        DefSet killSet = set_difference(allDefs[g], gens[bb]);
+        kills.insert(std::make_pair(bb, DefSet(std::move(killSet))));
+      }
+
+      /* Run worklist algorithm */
+      Worklist worklist{};
+
+      /* Initialize worklist and in */
+      for (BasicBlock &bi : *f) {
+        worklist.push_back(&bi);
+        in[&bi] = {};
+      }
+
+      /* Initialize out with gen */
+      for (const std::pair<const BasicBlock *, DefSet> &p : gens) {
+        out[p.first] = {p.second.begin(), p.second.end()};
+      }
+
+      while (!worklist.empty()) {
+        const BasicBlock *N = worklist.pop_back_val();
+
+        for (const BasicBlock *p : predecessors(N))
+          llvm::set_union(in[N], out[p]);
+
+        bool changed =
+            llvm::set_union(out[N], llvm::set_difference(in[N], kills[N]));
+
+        if (llvm::set_union(out[N], gens[N])) {
+          changed = true;
+        }
+
+        if (changed) {
+          for (const BasicBlock *s : successors(N))
+            worklist.push_back(s);
+        }
+      }
+
+      /* Populate RDS */
+      for (StoreInst *def : allDefs[g]) {
+        rds.insert(std::make_pair(def, std::set<LoadInst *>()));
+        for (BasicBlock &bi : *f) {
+          BasicBlock *bb = &bi;
+          bool reachesBlock = (in[bb].count(def) != 0);
+          bool propagates = (out[bb].count(def) != 0);
+
+          /* Collect all uses in current BB */
+          for (Instruction *i = def->getNextNonDebugInstruction(); i != nullptr;
+               i = i->getNextNonDebugInstruction()) {
+            if (LoadInst *li = dyn_cast<LoadInst>(i)) {
+              if (li->getPointerOperand() == g) {
+                rds[def].insert(li);
+                loadToStoreMap[li] = def;
+              }
+            }
+          }
+
+          if (reachesBlock && propagates) {
+            /* Collect all uses in this block */
+            for (Instruction &ii : bi) {
+              if (LoadInst *li = dyn_cast<LoadInst>(&ii)) {
+                if (li->getPointerOperand() == g) {
+                  rds[def].insert(li);
+                  loadToStoreMap[li] = def;
+                }
+              }
+            }
+          } else if (reachesBlock && !propagates) {
+            /* This block killed the def; Collect any uses prior to def that
+             * killed it */
+            for (Instruction &ii : bi) {
+              if (StoreInst *si = dyn_cast<StoreInst>(&ii)) {
+                if (gens[bb].count(si))
+                  break;
+              } else if (LoadInst *li = dyn_cast<LoadInst>(&ii)) {
+                if (li->getPointerOperand() == g) {
+                  rds[def].insert(li);
+                  loadToStoreMap[li] = def;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
 /*
  * Calculates instruction labels and group thresholds.
  * The basis for calculation is a data-use graph constructed using use-def
  * chains and the control flow graph.
  */
-void DOPGuard::calculateLabels(void) {
-  /*
-   * TODO
-   */
-}
+void DOPGuard::calculateLabels(void) { calculateRDS(); }
 
 long long DOPGuard::getLabel(Instruction *i) {
   /* TODO: Implement when label calculation is done */
@@ -367,7 +525,8 @@ bool DOPGuard::addPassPlugin(std::string name,
 }
 
 /*
- * Traverses each user of a DFI-protected variable and instruments accordingly.
+ * Traverses each user of a DFI-protected variable and instruments
+ * accordingly.
  */
 void DOPGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
   for (auto &g : isolatedVars) {
@@ -402,12 +561,6 @@ void DOPGuard::primeInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
   Value *rem = builder.CreateURem(
       lastLabel, ConstantInt::get(DOPGuard::labelMetadataType, 14));
 
-  assert(rem != nullptr);
-
-  if (rem == nullptr) {
-    abort();
-  }
-
   Value *equal = builder.CreateICmpEQ(
       rem, dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType, 0)));
 
@@ -420,11 +573,8 @@ void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
   SmallVector<BasicBlock *, 10> blocks = {};
   BasicBlock *pred = old->getSinglePredecessor();
 
-  Value *target = i->getOperand(0);
-  for (auto it = target->user_begin(); it != target->user_end(); it++) {
-    if (isa<StoreInst>(*it))
-      numblocks++;
-  }
+  StoreInst *si = loadToStoreMap[dyn_cast<LoadInst>(i)];
+  numblocks = rds[si].size();
 
   blocks.push_back(pred);
   for (int j = 0; j < (numblocks - 1); j++) {
@@ -432,8 +582,8 @@ void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
                                         i->getFunction(), nullptr));
   }
 
-  /* Link each block in the compare-branch chain, starting from the last to the
-   * first */
+  /* Link each block in the compare-branch chain, starting from the last to
+   * the first */
   BasicBlock *falseTgt = abortBB;
   for (int j = 0; j < numblocks; j++) {
     BasicBlock *bb = blocks.back();
@@ -467,7 +617,7 @@ bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
 llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dguard-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            PB.registerPipelineEarlySimplificationEPCallback(
+            PB.registerOptimizerLastEPCallback(
                 [&](ModulePassManager &MPM, auto) {
                   MPM.addPass(DOPGuard());
                   return true;
@@ -505,3 +655,6 @@ llvm::StringMap<dfiSchemeFType *> DOPGuard::schemeMap = {
     {"hamming", hammingInst},
     {"prime", primeInst},
 };
+
+llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> DOPGuard::loadToStoreMap{};
+llvm::DenseMap<llvm::StoreInst *, std::set<LoadInst *>> DOPGuard::rds{};
