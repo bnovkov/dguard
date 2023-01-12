@@ -65,7 +65,9 @@ private:
   static llvm::ValueMap<llvm::Value *, long long> labelStore;
 
   static llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> loadToStoreMap;
-  static llvm::DenseMap<llvm::StoreInst *, std::set<llvm::LoadInst *>> rds;
+  static llvm::DenseMap<llvm::StoreInst *,
+                        llvm::SmallPtrSet<llvm::LoadInst *, 10>>
+      rds;
 
   static const std::string labelArrName;
   static llvm::StringMap<dfiSchemeFType *> schemeMap;

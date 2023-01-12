@@ -349,7 +349,7 @@ BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
   return BB;
 }
 
-using DefSet = std::set<StoreInst *>;
+using DefSet = SmallPtrSet<StoreInst *, 10>;
 using BBDefMap = DenseMap<const BasicBlock *, DefSet>;
 using VarDefMap = DenseMap<const GlobalVariable *, DefSet>;
 using Worklist = SmallVector<const BasicBlock *, 10>;
@@ -381,7 +381,7 @@ void DOPGuard::calculateRDS(void) {
 
     /* Collect all defs for variables in f */
     for (GlobalVariable *isolVar : isolatedVars) {
-      allDefs.insert(std::make_pair(isolVar, std::set<StoreInst *>()));
+      allDefs.insert(std::make_pair(isolVar, DefSet()));
       for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
         if (StoreInst *si = dyn_cast<StoreInst>(*it)) {
           if (si->getFunction() == f) {
@@ -440,9 +440,9 @@ void DOPGuard::calculateRDS(void) {
         bool changed =
             llvm::set_union(out[N], llvm::set_difference(in[N], kills[N]));
 
-        if (llvm::set_union(out[N], gens[N])) {
-          changed = true;
-        }
+        //       if (llvm::set_union(out[N], gens[N])) {
+        //   changed = true;
+        // }
 
         if (changed) {
           for (const BasicBlock *s : successors(N))
@@ -452,7 +452,7 @@ void DOPGuard::calculateRDS(void) {
 
       /* Populate RDS */
       for (StoreInst *def : allDefs[g]) {
-        rds.insert(std::make_pair(def, std::set<LoadInst *>()));
+        rds.insert(std::make_pair(def, SmallPtrSet<LoadInst *, 10>()));
         for (BasicBlock &bi : *f) {
           BasicBlock *bb = &bi;
           bool reachesBlock = (in[bb].count(def) != 0);
@@ -529,11 +529,11 @@ bool DOPGuard::addPassPlugin(std::string name,
  * accordingly.
  */
 void DOPGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
-  for (auto &g : isolatedVars) {
-    GlobalVariable *isolVar = g;
-    for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
-      if (isa<LoadInst>(*it) || isa<StoreInst>(*it))
-        insertDFIInst(*it, instF);
+  for (auto &it : rds) {
+    insertDFIInst(it.first, instF);
+
+    for (LoadInst *li : it.second) {
+      insertDFIInst(li, instF);
     }
   }
 }
@@ -657,4 +657,4 @@ llvm::StringMap<dfiSchemeFType *> DOPGuard::schemeMap = {
 };
 
 llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> DOPGuard::loadToStoreMap{};
-llvm::DenseMap<llvm::StoreInst *, std::set<LoadInst *>> DOPGuard::rds{};
+llvm::DenseMap<llvm::StoreInst *, SmallPtrSet<LoadInst *, 10>> DOPGuard::rds{};
