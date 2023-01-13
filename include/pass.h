@@ -57,6 +57,8 @@ private:
   static dfiSchemeFType hammingInst;
   static dfiSchemeFType primeInst;
   static dfiSchemeFType dfiInst;
+  static dfiSchemeFType manhInst;
+
   static int allocaId;
 
   static std::vector<llvm::GlobalVariable *> isolatedVars;

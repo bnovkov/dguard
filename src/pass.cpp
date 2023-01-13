@@ -12,6 +12,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Use.h"
 #include "llvm/IR/Value.h"
@@ -437,14 +438,7 @@ void DOPGuard::calculateRDS(void) {
         for (const BasicBlock *p : predecessors(N))
           llvm::set_union(in[N], out[p]);
 
-        bool changed =
-            llvm::set_union(out[N], llvm::set_difference(in[N], kills[N]));
-
-        //       if (llvm::set_union(out[N], gens[N])) {
-        //   changed = true;
-        // }
-
-        if (changed) {
+        if (llvm::set_union(out[N], llvm::set_difference(in[N], kills[N]))) {
           for (const BasicBlock *s : successors(N))
             worklist.push_back(s);
         }
@@ -567,6 +561,36 @@ void DOPGuard::primeInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
   builder.CreateCondBr(equal, old, abortBB);
 }
 
+void DOPGuard::manhInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
+                        BasicBlock *old, BasicBlock *abortBB) {
+  LLVMContext &c = i->getContext();
+  Function *abs = Intrinsic::getDeclaration(i->getModule(), Intrinsic::abs,
+                                            {IntegerType::getInt32Ty(c)});
+  IntegerType *coordTy = IntegerType::getInt32Ty(c);
+
+  /* Slice value and load coords */
+  Value *x = builder.CreateTrunc(lastLabel, coordTy);
+  Value *y = builder.CreateTrunc(
+      builder.CreateLShr(lastLabel, ConstantInt::get(lastLabel->getType(), 32)),
+      coordTy);
+
+  /* Calculate abs diff of points */
+  Value *xDiff = builder.CreateSub(x, ConstantInt::get(coordTy, 0));
+  Value *yDiff = builder.CreateSub(y, ConstantInt::get(coordTy, 0));
+
+  Value *xDiffAbs = builder.CreateCall(
+      abs, {xDiff, ConstantInt::getFalse(IntegerType::getInt1Ty(c))});
+  Value *yDiffAbs = builder.CreateCall(
+      abs, {yDiff, ConstantInt::getFalse(IntegerType::getInt1Ty(c))});
+
+  /* Sum the diffs */
+  Value *sum = builder.CreateAdd(xDiffAbs, yDiffAbs);
+
+  Value *equal = builder.CreateICmpEQ(sum, ConstantInt::get(coordTy, 0));
+
+  builder.CreateCondBr(equal, old, abortBB);
+}
+
 void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
                        BasicBlock *old, BasicBlock *abortBB) {
   int numblocks = 0;
@@ -654,6 +678,7 @@ llvm::StringMap<dfiSchemeFType *> DOPGuard::schemeMap = {
     {"dfi", dfiInst},
     {"hamming", hammingInst},
     {"prime", primeInst},
+    {"manhattan", manhInst},
 };
 
 llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> DOPGuard::loadToStoreMap{};
