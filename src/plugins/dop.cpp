@@ -92,7 +92,7 @@ public:
         }
       }
       if (allocasToBePromoted.size() != 0) {
-        DOPGuard::promoteToThreadLocal(M, &allocasToBePromoted);
+        DGuard::promoteToThreadLocal(M, &allocasToBePromoted);
         changed = true;
       }
     }

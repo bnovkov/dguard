@@ -1,4 +1,4 @@
-benchmarks=("blackscholes" "fluidanimate" "streamcluster" "swaptions" "splash2x.barnes" "splash2x.cholesky" "splash2x.fft" "splash2x.lu_cb" "splash2x.lu_ncb" "splash2x.ocean_cp" "splash2x.radiosity" "splash2x.radix" "splash2x.water_nsquared" "splash2x.water_spatial")
+benchmarks=( "blackscholes"  "streamcluster" "swaptions" "splash2x.cholesky" "splash2x.fft"  "splash2x.ocean_cp" "splash2x.radix" "splash2x.water_nsquared" "splash2x.water_spatial" "splash2x.lu_cb" "splash2x.lu_ncb")
 
 parsecmgmt="./bin/parsecmgmt"
 data_process="process.py"
@@ -7,7 +7,7 @@ build_benchmarks() {
     cd $1
 
     for benchmark in ${benchmarks[@]};
-    do	
+    do
 	echo "Building ${benchmark}..."
         $parsecmgmt -a build -p $benchmark 1> /dev/null
     done
@@ -26,30 +26,36 @@ clean_benchmarks() {
 run_benchmarks() {
     configs_folder=$(pwd)/configs
     cd $1
-    for i in {0..2};
-    do
-	cp "${configs_folder}/gcc_O${i}.bldconf" "./config/gcc.bldconf"
-	echo "Building -O${i}..."
+	cp "${configs_folder}/gcc_O0_$1.bldconf" "./config/gcc.bldconf"
+	echo "Building -O0.."
 	build_benchmarks "."
 
-	echo "Running -O${i}..."
+	echo "Running -O0.."
 	for benchmark in ${benchmarks[@]};
    	do
-  	      resfile="./results/${benchmark}_O${i}.results"
+        echo "Running ${benchmark}.."
+
+  	    resfile="./results/${benchmark}.results"
  	      if [ -f "$resfile" ]; then
 	            rm $resfile
 	      fi
-
-	      output=$($parsecmgmt -a run -p $benchmark -i simlarge)
- 	      echo "$output" | grep "real" | sed -r 's/real.*([0-9]+m.*)s/\1/' >> $resfile
+        for i in {0..10};
+        do
+	          output=$($parsecmgmt -a run -p $benchmark -i simlarge)
+            crash=$(echo "${output}" | grep -i "dumped" || true);
+            if [ ! -z "$crash" ];then
+               echo "${benchmark} crashed!"
+               exit 1;
+            fi
+ 	          echo "$output" | grep "real" | sed -r 's/real.*([0-9]+m.*)s/\1/' >> $resfile
+        done
  	done
-	echo "Cleaning -O${i}..."
+	echo "Cleaning -O0.."
 	clean_benchmarks "."
-    done
 }
 
 print_usage() {
-    echo "placeholder"
+    echo "bench.sh [parsec_benchmark_folder] [command]"
 }
 
 if [ "$#" -ne 2 ]; then

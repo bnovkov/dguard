@@ -45,7 +45,7 @@ static cl::opt<std::string> scheme("scheme", cl::init("hamming"),
 /*
  * Runs all defined static analysis plugins on a module.
  */
-bool DOPGuard::runOnModule(Module &M) {
+bool DGuard::runOnModule(Module &M) {
   bool changed = false;
   dfiSchemeFType *instF;
 
@@ -56,7 +56,7 @@ bool DOPGuard::runOnModule(Module &M) {
     return false;
   }
 
-  for (auto it = DOPGuard::pluginMap.begin(); it != DOPGuard::pluginMap.end();
+  for (auto it = DGuard::pluginMap.begin(); it != DGuard::pluginMap.end();
        it++) {
     bool passChanged = it->second(M);
     changed = changed || passChanged;
@@ -77,11 +77,12 @@ bool DOPGuard::runOnModule(Module &M) {
 /*
  * Define the label array.
  */
-void DOPGuard::createMetadataArray(llvm::Module &m) {
+void DGuard::createMetadataArray(llvm::Module &m) {
   ArrayType *arrType = ArrayType::get(labelMetadataType, isolatedVars.size());
 
   GlobalVariable *arr = new GlobalVariable(
-      m, arrType, false, GlobalValue::ExternalLinkage, nullptr, labelArrName);
+      m, arrType, false, GlobalValue::ExternalLinkage, nullptr, labelArrName,
+      nullptr, llvm::GlobalValue::NotThreadLocal, 256, false);
   arr->setInitializer(ConstantAggregateZero::get(arrType));
   arr->setAlignment(MaybeAlign(8));
 }
@@ -90,7 +91,7 @@ void DOPGuard::createMetadataArray(llvm::Module &m) {
  * Determine size of label type based on the number of
  * instrumented variable and labels.
  */
-void DOPGuard::calculateMetadataType(llvm::Module &m) {
+void DGuard::calculateMetadataType(llvm::Module &m) {
   LLVMContext &C = m.getContext();
   // TODO: determine type size dynamically
   labelMetadataType = IntegerType::getInt64Ty(C);
@@ -99,7 +100,7 @@ void DOPGuard::calculateMetadataType(llvm::Module &m) {
 /*
  * Takes a stack variable and replaces it with a LocalExec TLS variable.
  */
-void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaInst *al) {
+void DGuard::promoteToThreadLocal(llvm::Module &m, AllocaInst *al) {
   std::ostringstream varName;
 
   BasicBlock::iterator ii(al);
@@ -133,7 +134,7 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaInst *al) {
   allocaId++;
 }
 
-void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
+void DGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
   std::ostringstream varName;
 
   for (llvm::AllocaInst *al : *allocas) {
@@ -150,7 +151,7 @@ void DOPGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
  * The target BasicBlock is split before the instruction "u" and the instruction
  * block is appended to the newly created, preceding BB.
  */
-void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
+void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
   Instruction *i, *predTerm;
   BasicBlock *old, *pred;
   // Value *loadStoreTargetPtr;
@@ -160,11 +161,12 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
 
   Module *m = i->getModule();
   // LLVMContext &C = u->getContext();
-  Value *metadataArray = m->getGlobalVariable(DOPGuard::labelArrName);
+  Value *metadataArray = m->getGlobalVariable(DGuard::labelArrName);
 
   /* Fetch 'rdfsbase64' */
   //  Function *rdFS64 = Intrinsic::getDeclaration(m,
   //  Intrinsic::x86_rdfsbase_64);
+
   if (isa<llvm::LoadInst>(i)) {
 
     SmallPtrSet<BasicBlock *, 10> oldPreds = {};
@@ -236,19 +238,8 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
 
     /* Fetch last label */
     Value *lastLabel =
-        builder.CreateLoad(DOPGuard::labelMetadataType, metadataPtr);
+        builder.CreateLoad(DGuard::labelMetadataType, metadataPtr);
 
-    // /* Calculate distance metric */
-    // Value *distance = builder.CreateXor(lastLabel, lastLabel);
-
-    // /* Compare with threshold */
-    // // TODO: calculate and store thresholds in a
-    // // "ProtectedVar" wrapper class
-    // long long loadThresh = getThreshold(i);
-    // Value *equal = builder.CreateICmpEQ(
-    //     distance,
-    //     dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType,
-    //                                                loadThresh)));
     assert(loadToStoreMap.count(dyn_cast<LoadInst>(i)) > 0);
     StoreInst *si = loadToStoreMap[dyn_cast<LoadInst>(i)];
     assert(rds.count(si) > 0);
@@ -258,17 +249,14 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
       instF(builder, lastLabel, i, old, abortBB);
     } else {
       Value *equal = builder.CreateICmpEQ(
-          dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType, 0)),
-          dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType, 0)));
+          dyn_cast<Value>(ConstantInt::get(DGuard::labelMetadataType, 0)),
+          dyn_cast<Value>(ConstantInt::get(DGuard::labelMetadataType, 0)));
 
       builder.CreateCondBr(equal, old, abortBB);
     }
-    /* Insert a conditional branch */
-    // builder.CreateCondBr(equal, old, abortBB);
-    /* Erase unconditional branch placed by SplitBlock */
+
     pred->getTerminator()->eraseFromParent();
   } else if (isa<llvm::StoreInst>(i)) {
-    // loadStoreTargetPtr = i->getOperand(1);
 
     IRBuilder<> builder(i->getParent());
     builder.SetInsertPoint(i);
@@ -301,7 +289,7 @@ void DOPGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
 /*
  * Returns a BB that calls "__dguard_abort" in function 'F'.
  */
-BasicBlock *DOPGuard::createAbortCallBB(llvm::Module *m, Function *F) {
+BasicBlock *DGuard::createAbortCallBB(llvm::Module *m, Function *F) {
   BasicBlock *BB = nullptr;
 
   /* Check whether the corresponding BB is already defined */
@@ -359,7 +347,7 @@ using Worklist = SmallVector<const BasicBlock *, 10>;
  * Runs Reaching Definitions Analysis for protected variables and calculates
  * the RDS.
  */
-void DOPGuard::calculateRDS(void) {
+void DGuard::calculateRDS(void) {
 
   SmallVector<Function *, 5> funcs;
 
@@ -498,21 +486,21 @@ void DOPGuard::calculateRDS(void) {
  * The basis for calculation is a data-use graph constructed using use-def
  * chains and the control flow graph.
  */
-void DOPGuard::calculateLabels(void) { calculateRDS(); }
+void DGuard::calculateLabels(void) { calculateRDS(); }
 
-long long DOPGuard::getLabel(Instruction *i) {
+long long DGuard::getLabel(Instruction *i) {
   /* TODO: Implement when label calculation is done */
   return 0;
 }
 
-long long DOPGuard::getThreshold(Instruction *loadI) {
+long long DGuard::getThreshold(Instruction *loadI) {
   /* TODO: Implement when label calculation is done */
   return 0;
 }
 
-bool DOPGuard::addPassPlugin(std::string name,
-                             std::function<bool(llvm::Module &)> func) {
-  return DOPGuard::pluginMap
+bool DGuard::addPassPlugin(std::string name,
+                           std::function<bool(llvm::Module &)> func) {
+  return DGuard::pluginMap
       .insert(std::pair<std::string, std::function<bool(llvm::Module &)>>(name,
                                                                           func))
       .second;
@@ -522,7 +510,7 @@ bool DOPGuard::addPassPlugin(std::string name,
  * Traverses each user of a DFI-protected variable and instruments
  * accordingly.
  */
-void DOPGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
+void DGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
   for (auto &it : rds) {
     insertDFIInst(it.first, instF);
 
@@ -532,9 +520,8 @@ void DOPGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
   }
 }
 
-void DOPGuard::hammingInst(IRBuilder<> &builder, Value *lastLabel,
-                           Instruction *i, BasicBlock *old,
-                           BasicBlock *abortBB) {
+void DGuard::hammingInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
+                         BasicBlock *old, BasicBlock *abortBB) {
   /* Calculate distance metric */
   Value *distance = builder.CreateXor(lastLabel, lastLabel);
 
@@ -543,26 +530,26 @@ void DOPGuard::hammingInst(IRBuilder<> &builder, Value *lastLabel,
   // "ProtectedVar" wrapper class
   long long loadThresh = getThreshold(i);
   Value *equal = builder.CreateICmpEQ(
-      distance, dyn_cast<Value>(
-                    ConstantInt::get(DOPGuard::labelMetadataType, loadThresh)));
+      distance,
+      dyn_cast<Value>(ConstantInt::get(DGuard::labelMetadataType, loadThresh)));
 
   builder.CreateCondBr(equal, old, abortBB);
 }
 
-void DOPGuard::primeInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
-                         BasicBlock *old, BasicBlock *abortBB) {
+void DGuard::primeInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
+                       BasicBlock *old, BasicBlock *abortBB) {
 
   Value *rem = builder.CreateURem(
-      lastLabel, ConstantInt::get(DOPGuard::labelMetadataType, 14));
+      lastLabel, ConstantInt::get(DGuard::labelMetadataType, 14));
 
   Value *equal = builder.CreateICmpEQ(
-      rem, dyn_cast<Value>(ConstantInt::get(DOPGuard::labelMetadataType, 0)));
+      rem, dyn_cast<Value>(ConstantInt::get(DGuard::labelMetadataType, 0)));
 
   builder.CreateCondBr(equal, old, abortBB);
 }
 
-void DOPGuard::manhInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
-                        BasicBlock *old, BasicBlock *abortBB) {
+void DGuard::manhInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
+                      BasicBlock *old, BasicBlock *abortBB) {
   LLVMContext &c = i->getContext();
   Function *abs = Intrinsic::getDeclaration(i->getModule(), Intrinsic::abs,
                                             {IntegerType::getInt32Ty(c)});
@@ -591,8 +578,8 @@ void DOPGuard::manhInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
   builder.CreateCondBr(equal, old, abortBB);
 }
 
-void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
-                       BasicBlock *old, BasicBlock *abortBB) {
+void DGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
+                     BasicBlock *old, BasicBlock *abortBB) {
   int numblocks = 0;
   SmallVector<BasicBlock *, 10> blocks = {};
   BasicBlock *pred = old->getSinglePredecessor();
@@ -617,7 +604,7 @@ void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
       curBuilder.SetInsertPoint(&bb->back());
 
     Value *equal = curBuilder.CreateICmpEQ(
-        lastLabel, ConstantInt::get(DOPGuard::labelMetadataType, j));
+        lastLabel, ConstantInt::get(DGuard::labelMetadataType, j));
     curBuilder.CreateCondBr(equal, old, falseTgt);
 
     falseTgt = bb;
@@ -627,23 +614,20 @@ void DOPGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
 /*
  * LLVM pass boilerplate code.
  */
-PreservedAnalyses DOPGuard::run(llvm::Module &M,
-                                llvm::ModuleAnalysisManager &) {
+PreservedAnalyses DGuard::run(llvm::Module &M, llvm::ModuleAnalysisManager &) {
 
   return (runOnModule(M) ? llvm::PreservedAnalyses::none()
                          : llvm::PreservedAnalyses::all());
 }
 
-bool LegacyDOPGuard::runOnModule(llvm::Module &M) {
-  return Impl.runOnModule(M);
-}
+bool LegacyDGuard::runOnModule(llvm::Module &M) { return Impl.runOnModule(M); }
 
-llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
+llvm::PassPluginLibraryInfo getDGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dguard-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
             PB.registerOptimizerLastEPCallback(
                 [&](ModulePassManager &MPM, auto) {
-                  MPM.addPass(DOPGuard());
+                  MPM.addPass(DGuard());
                   return true;
                 });
             /*          [](PassBuilder &PB) {
@@ -651,7 +635,7 @@ llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
                         [](StringRef Name, ModulePassManager &MPM,
                            ArrayRef<PassBuilder::PipelineElement>) {
                           if (Name == "dguard-pass") {
-                            MPM.addPass(DOPGuard());
+                            MPM.addPass(DGuard());
                             return true;
                           }
                           return false;
@@ -661,25 +645,25 @@ llvm::PassPluginLibraryInfo getDOPGuardPluginInfo() {
 
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
-  return getDOPGuardPluginInfo();
+  return getDGuardPluginInfo();
 }
 
 /*
  * Private class data initialization.
  */
-llvm::StringMap<std::function<bool(llvm::Module &)>> DOPGuard::pluginMap = {};
-std::vector<llvm::GlobalVariable *> DOPGuard::isolatedVars = {};
-int DOPGuard::allocaId = 0;
-const std::string DOPGuard::labelArrName = "__dguard_label_arr";
-llvm::Type *DOPGuard::labelMetadataType = nullptr;
-llvm::ValueMap<llvm::Value *, long long> DOPGuard::labelStore{};
+llvm::StringMap<std::function<bool(llvm::Module &)>> DGuard::pluginMap = {};
+std::vector<llvm::GlobalVariable *> DGuard::isolatedVars = {};
+int DGuard::allocaId = 0;
+const std::string DGuard::labelArrName = "__dguard_label_arr";
+llvm::Type *DGuard::labelMetadataType = nullptr;
+llvm::ValueMap<llvm::Value *, long long> DGuard::labelStore{};
 
-llvm::StringMap<dfiSchemeFType *> DOPGuard::schemeMap = {
+llvm::StringMap<dfiSchemeFType *> DGuard::schemeMap = {
     {"dfi", dfiInst},
     {"hamming", hammingInst},
     {"prime", primeInst},
     {"manhattan", manhInst},
 };
 
-llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> DOPGuard::loadToStoreMap{};
-llvm::DenseMap<llvm::StoreInst *, SmallPtrSet<LoadInst *, 10>> DOPGuard::rds{};
+llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> DGuard::loadToStoreMap{};
+llvm::DenseMap<llvm::StoreInst *, SmallPtrSet<LoadInst *, 10>> DGuard::rds{};

@@ -59,7 +59,7 @@ public:
     }
 
     if (allocasToBePromoted.size() != 0) {
-      DOPGuard::promoteToThreadLocal(M, &allocasToBePromoted);
+      DGuard::promoteToThreadLocal(M, &allocasToBePromoted);
       changed = true;
     }
 
@@ -68,29 +68,18 @@ public:
 };
 
 StringSet<> FuncListPlugin::funcnameSet{
-    "BlkSchlsEqEuroNoDiv", /* blackscholes */
-    "ComputeForcesMT",     /* fluidanimate */
-    //    "ComputeDensitiesMT",                    /* fluidanimate */
+    "BlkSchlsEqEuroNoDiv",          /* blackscholes */
+    "ComputeForcesMT",              /* fluidanimate */
     "pgain",                        /* streamcluster */
     "HJM_SimPath_Forward_Blocking", /* swaptions */
-    //    "CumNormalInv",                          /* swaptions */
-    "walksub", /* splash2x.barnes */
-    //    "gravsub",                               /* splash2x.barnes */
-    "ModifyTwoBySupernodeB", /* splash2x.cholesky */
-    //    "FillIn",                                /* splash2x.cholesky */
-    "FFT1DOnce", /* splash2x.fft */
-    //    "Transpose",                             /* splash2x.fft */
-    "lu",                /* splash2x.lu_* */
-    "relax",             /* splash2x.ocean_cp */
-    "subdivide_element", /* splash2x.radiosity */
-    "init",              /* splash2x.radix */
-    "CSHIFT",            /* splash2x.water_* */
-    //    "INTERF",                                /* splash2x.water */
-    //    "MDMAIN",                                /* splash2x.water */
-    "fooa",
-    "ngx_http_read_discarded_request_body",
-    "ngx_http_parse_chunked",
-    "ngx_http_discard_request_body_filter",
+    "walksub",                      /* splash2x.barnes */
+    "ModifyTwoBySupernodeB",        /* splash2x.cholesky */
+    "FFT1DOnce",                    /* splash2x.fft */
+    "lu",                           /* splash2x.lu_* */
+    "relax",                        /* splash2x.ocean_cp */
+    "subdivide_element",            /* splash2x.radiosity */
+    "init",                         /* splash2x.radix */
+    "CSHIFT",                       /* splash2x.water_* */
 };
 
 REGISTER_PASS_PLUGIN(funclist, FuncListPlugin::runOnModule);

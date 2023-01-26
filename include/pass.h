@@ -23,7 +23,7 @@ typedef void dfiSchemeFType(llvm::IRBuilder<> &, llvm::Value *,
 //------------------------------------------------------------------------------
 // New PM interface
 //------------------------------------------------------------------------------
-class DOPGuard : public llvm::PassInfoMixin<DOPGuard> {
+class DGuard : public llvm::PassInfoMixin<DGuard> {
 public:
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &);
   bool runOnModule(llvm::Module &M);
@@ -77,11 +77,11 @@ private:
 //------------------------------------------------------------------------------
 // Legacy PM interface
 //------------------------------------------------------------------------------
-class LegacyDOPGuard : public llvm::ModulePass {
+class LegacyDGuard : public llvm::ModulePass {
 public:
   static char ID;
-  LegacyDOPGuard() : ModulePass(ID) {}
+  LegacyDGuard() : ModulePass(ID) {}
   bool runOnModule(llvm::Module &M) override;
 
-  DOPGuard Impl;
+  DGuard Impl;
 };

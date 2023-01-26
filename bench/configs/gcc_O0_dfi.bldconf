@@ -40,7 +40,7 @@ case "${OSTYPE}" in
   # Linux + default case
 
   # CC_HOME is installation root of the C compiler
-  export CC_HOME="/home/bojan/Documents/untar_pit/llvm"
+  export CC_HOME="/home/XXX/Documents/untar_pit/llvm"
   # BINUTIL_HOME is installation root of the GNU binutils
   export BINUTIL_HOME="/usr"
   # GNUTOOL_HOME is installation root of the GNU tools
@@ -70,17 +70,18 @@ export MAKE="${GNUTOOL_HOME}/bin/${BINARY_PREFIX}make"
 # Flags for increased portability of binaries
 PORTABILITY_FLAGS="-static-libgcc -Wl,--hash-style=both,--as-needed"
 
-export DGUARD_HOME="/home/bojan/Documents/faks/dopguard/pass/build"
+export DGUARD_HOME="/home/XXX/Documents/faks/dopguard/pass/build"
 export DGUARD_PLUGIN="${DGUARD_HOME}/libDOPGuard.so"
-export DGUARD_LIB="${DGUARD_HOME}/libdguard.so"
+export DGUARD_LIB="${DGUARD_HOME}/libdguard.a"
+export DGUARD_FLAGS="-Xclang -load -Xclang '${DGUARD_PLUGIN}' -Xllvm -Xdebug -mllvm -scheme=dfi  -fpass-plugin='${DGUARD_PLUGIN}'"
 
 # Arguments to use
-export CFLAGS="-O1 -march=native -funroll-loops -fprefetch-loop-arrays ${PORTABILITY_FLAGS}"
-export CXXFLAGS="-O1 -march=native  -funroll-loops -fprefetch-loop-arrays -fpermissive -fno-exceptions ${PORTABILITY_FLAGS}"
+export CFLAGS="-O0 -march=native -funroll-loops -fprefetch-loop-arrays ${PORTABILITY_FLAGS} ${DGUARD_FLAGS}"
+export CXXFLAGS="-O0 -march=native  -funroll-loops -fprefetch-loop-arrays -fpermissive -fno-exceptions ${PORTABILITY_FLAGS} ${DGUARD_FLAGS}"
 export CPPFLAGS=""
 export CXXCPPFLAGS=""
 export LDFLAGS="-L${CC_HOME}/lib64 -L${CC_HOME}/lib"
-export LIBS=""
+export LIBS="${DGUARD_LIB}"
 export EXTRA_LIBS=""
 export PARMACS_MACRO_FILE="pthreads"
 

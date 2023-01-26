@@ -28,8 +28,6 @@ if (EXISTS ${PATH_TO_LLVM}/CMakeLists.txt)
   set (BUILD_AGAINST_PRECOMPILED_LLVM FALSE)
 endif()
 
-# This enables assertions for Release builds.
-# https://stackoverflow.com/questions/22140520/how-to-enable-assert-in-cmake-release-mode
 string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -Werror -Wall -Wextra -Wpedantic -fno-rtti")
@@ -73,18 +71,18 @@ include(AddLLVM)
 
 include_directories(${LLVM_INCLUDE_DIRS})
 
-add_library(DOPGuard MODULE
+add_library(DGuard MODULE
   ./src/pass.cpp
   ./src/plugins/func_list.cpp
 )
 
 target_include_directories(
-  DOPGuard
+  DGuard
   PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
 
-add_library(dguard SHARED
+add_library(dguard STATIC
 #  ./src/lib/metadata_init.c
   ./src/lib/dguard_funcs.c
 )
