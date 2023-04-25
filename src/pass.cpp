@@ -24,13 +24,13 @@
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/ADT/SetOperations.h"
 
+#include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <ios>
 #include <sstream>
 #include <utility>
-
 using namespace llvm;
 
 #include "llvm/Passes/PassBuilder.h"
@@ -142,14 +142,20 @@ void DGuard::promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas) {
   }
 }
 
+void DGuard::addIsolatedVars(llvm::Module &m, ValueVec *vvp) {
+  for (auto vp : *vvp) {
+    assert(isa<GlobalVariable>(vp) || isa<AllocaInst>(vp));
+    isolatedVars.push_back(vp);
+  }
+}
 /*
  * Inserts a block of instructions that enforce dataflow integrity
  * by indexing into the metadata field, calculating the chosen distance metric
  * for the last recorded store label and the current label, and comparing the
  * result with the local threshold.
  *
- * The target BasicBlock is split before the instruction "u" and the instruction
- * block is appended to the newly created, preceding BB.
+ * The target BasicBlock is split before the instruction "u" and the
+ * instruction block is appended to the newly created, preceding BB.
  */
 void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
   Instruction *i, *predTerm;
@@ -227,7 +233,8 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     //                                          IntegerType::getInt64Ty(C));
     /* Fetch target address */
     // Value *targetPtrInt =
-    //  builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C));
+    //  builder.CreatePtrToInt(loadStoreTargetPtr,
+    //  IntegerType::getInt64Ty(C));
 
     /* Index into label array */
     Value *metadataPtr = builder.CreateGEP(
@@ -340,7 +347,7 @@ BasicBlock *DGuard::createAbortCallBB(llvm::Module *m, Function *F) {
 
 using DefSet = SmallPtrSet<StoreInst *, 10>;
 using BBDefMap = DenseMap<const BasicBlock *, DefSet>;
-using VarDefMap = DenseMap<const GlobalVariable *, DefSet>;
+using VarDefMap = DenseMap<const Value *, DefSet>;
 using Worklist = SmallVector<const BasicBlock *, 10>;
 
 /*
@@ -353,7 +360,7 @@ void DGuard::calculateRDS(void) {
 
   /* Collect each function where the protected var has users */
   for (auto &g : isolatedVars) {
-    GlobalVariable *isolVar = g;
+    Value *isolVar = g;
     for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
       if (isa<LoadInst>(*it) || isa<StoreInst>(*it)) {
         funcs.push_back((dyn_cast<Instruction>(*it))->getFunction());
@@ -369,7 +376,7 @@ void DGuard::calculateRDS(void) {
     VarDefMap allDefs;
 
     /* Collect all defs for variables in f */
-    for (GlobalVariable *isolVar : isolatedVars) {
+    for (Value *isolVar : isolatedVars) {
       allDefs.insert(std::make_pair(isolVar, DefSet()));
       for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
         if (StoreInst *si = dyn_cast<StoreInst>(*it)) {
@@ -381,7 +388,7 @@ void DGuard::calculateRDS(void) {
     }
 
     /* Collect GEN and KILL for each variable and BB */
-    for (GlobalVariable *g : isolatedVars) {
+    for (Value *g : isolatedVars) {
       if (allDefs[g].size() == 0) {
         continue;
       }
@@ -652,7 +659,7 @@ llvmGetPassPluginInfo() {
  * Private class data initialization.
  */
 llvm::StringMap<std::function<bool(llvm::Module &)>> DGuard::pluginMap = {};
-std::vector<llvm::GlobalVariable *> DGuard::isolatedVars = {};
+std::vector<llvm::Value *> DGuard::isolatedVars = {};
 int DGuard::allocaId = 0;
 const std::string DGuard::labelArrName = "__dguard_label_arr";
 llvm::Type *DGuard::labelMetadataType = nullptr;

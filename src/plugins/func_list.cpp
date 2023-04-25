@@ -82,4 +82,4 @@ StringSet<> FuncListPlugin::funcnameSet{
     "CSHIFT",                       /* splash2x.water_* */
 };
 
-REGISTER_PASS_PLUGIN(funclist, FuncListPlugin::runOnModule);
+// REGISTER_PASS_PLUGIN(funclist, FuncListPlugin::runOnModule);

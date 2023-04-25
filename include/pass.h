@@ -17,6 +17,7 @@
 #include "llvm/IR/IRBuilder.h"
 
 typedef llvm::SmallVector<llvm::AllocaInst *, 32> AllocaVec;
+typedef llvm::SmallVector<llvm::Value *, 32> ValueVec;
 typedef void dfiSchemeFType(llvm::IRBuilder<> &, llvm::Value *,
                             llvm::Instruction *, llvm::BasicBlock *,
                             llvm::BasicBlock *);
@@ -37,6 +38,7 @@ public:
   static bool addPassPlugin(std::string, std::function<bool(llvm::Module &)>);
   static void promoteToThreadLocal(llvm::Module &m, AllocaVec *allocas);
   static void promoteToThreadLocal(llvm::Module &m, llvm::AllocaInst *al);
+  static void addIsolatedVars(llvm::Module &m, ValueVec *vvp);
 
 private:
   /* Instrumentation helpers */
@@ -61,7 +63,8 @@ private:
 
   static int allocaId;
 
-  static std::vector<llvm::GlobalVariable *> isolatedVars;
+  /* N.B. - either a GlobalVariable or AllocaInst */
+  static std::vector<llvm::Value *> isolatedVars;
   static llvm::StringMap<std::function<bool(llvm::Module &)>> pluginMap;
   static llvm::Type *labelMetadataType;
   static llvm::ValueMap<llvm::Value *, long long> labelStore;

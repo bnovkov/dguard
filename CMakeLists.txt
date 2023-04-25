@@ -73,7 +73,7 @@ include_directories(${LLVM_INCLUDE_DIRS})
 
 add_library(DGuard MODULE
   ./src/pass.cpp
-  ./src/plugins/func_list.cpp
+  ./src/plugins/full.cpp
 )
 
 target_include_directories(
