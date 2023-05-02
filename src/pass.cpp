@@ -24,6 +24,7 @@
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/ADT/SetOperations.h"
+#include "llvm/ADT/SmallSet.h"
 
 #include <cassert>
 #include <cstdlib>
@@ -367,14 +368,14 @@ BasicBlock *DGuard::createAbortCallBB(llvm::Module *m, Function *F) {
  */
 void DGuard::calculateRDS(void) {
 
-  SmallVector<Function *, 24> funcs;
+  SmallSet<Function *, 24> funcs;
 
   /* Collect each function where the protected var has users */
   for (auto &g : isolatedVars) {
     Value *isolVar = g;
     for (auto it = isolVar->user_begin(); it != isolVar->user_end(); it++) {
       if (isa<LoadInst>(*it) || isa<StoreInst>(*it)) {
-        funcs.push_back((dyn_cast<Instruction>(*it))->getFunction());
+        funcs.insert((dyn_cast<Instruction>(*it))->getFunction());
       }
     }
   }
@@ -384,6 +385,8 @@ void DGuard::calculateRDS(void) {
     kills.clear();
     out.clear();
     in.clear();
+    allDefs.clear();
+
     /* Collect all defs for variables in f */
     for (Value *isolVar : isolatedVars) {
       allDefs.insert(std::make_pair(isolVar, DefSet()));
