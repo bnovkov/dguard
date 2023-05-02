@@ -30,7 +30,7 @@ endif()
 
 string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -Werror -Wall -Wextra -Wpedantic -fno-rtti")
+#set(CMAKE_CXX_COMPILER "clang++")
 
 
 if (${BUILD_AGAINST_PRECOMPILED_LLVM})
@@ -75,12 +75,14 @@ add_library(DGuard MODULE
   ./src/pass.cpp
   ./src/plugins/full.cpp
 )
+#set(CMAKE_CXX_FLAGS "-O3 -g -Wall -Wextra -fno-rtti")
 
 target_include_directories(
   DGuard
   PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/./include"
 )
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -fno-rtti")
 
 add_library(dguard STATIC
 #  ./src/lib/metadata_init.c

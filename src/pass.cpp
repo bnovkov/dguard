@@ -2,6 +2,7 @@
 #include "pass.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -71,7 +72,7 @@ bool DGuard::runOnModule(Module &M) {
     instrumentIsolatedVars(instF);
   }
 
-  // M.dump();
+  // dump();
 
   return changed;
 }
@@ -197,6 +198,7 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     for (auto it = pred_begin(pred), et = pred_end(pred); it != et; ++it) {
       newPreds.insert(*it);
     }
+    SmallVector<ConstantInt *> cases;
 
     for (BasicBlock *bb : oldPreds) {
       if (newPreds.contains(bb))
@@ -221,6 +223,14 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
       } else if (SwitchInst *si = dyn_cast<SwitchInst>(term)) {
         if (si->getDefaultDest() == old) {
           si->setDefaultDest(pred);
+        } else {
+          //  cases.clear();
+
+          for (auto Case : si->cases()) {
+            if (Case.getCaseSuccessor() != old)
+              continue;
+            Case.setSuccessor(pred);
+          }
         }
       }
     }

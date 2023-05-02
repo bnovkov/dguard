@@ -5,6 +5,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/GlobalValue.h"
@@ -13,6 +14,8 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ValueMap.h"
+#include "llvm/ADT/SparseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/Pass.h"
 #include "llvm/IR/IRBuilder.h"
 
@@ -25,7 +28,7 @@ typedef void dfiSchemeFType(llvm::IRBuilder<> &, llvm::Value *,
 using DefSet = llvm::SmallPtrSet<llvm::StoreInst *, 32>;
 using BBDefMap = llvm::DenseMap<const llvm::BasicBlock *, DefSet>;
 using VarDefMap = llvm::DenseMap<const llvm::Value *, DefSet>;
-using Worklist = llvm::SmallVector<const llvm::BasicBlock *, 32>;
+using Worklist = llvm::SmallVector<const llvm::BasicBlock *, 0>;
 //------------------------------------------------------------------------------
 // New PM interface
 //------------------------------------------------------------------------------
