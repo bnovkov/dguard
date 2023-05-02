@@ -21,6 +21,11 @@ typedef llvm::SmallVector<llvm::Value *, 32> ValueVec;
 typedef void dfiSchemeFType(llvm::IRBuilder<> &, llvm::Value *,
                             llvm::Instruction *, llvm::BasicBlock *,
                             llvm::BasicBlock *);
+
+using DefSet = llvm::SmallPtrSet<llvm::StoreInst *, 32>;
+using BBDefMap = llvm::DenseMap<const llvm::BasicBlock *, DefSet>;
+using VarDefMap = llvm::DenseMap<const llvm::Value *, DefSet>;
+using Worklist = llvm::SmallVector<const llvm::BasicBlock *, 32>;
 //------------------------------------------------------------------------------
 // New PM interface
 //------------------------------------------------------------------------------
@@ -76,6 +81,12 @@ private:
 
   static const std::string labelArrName;
   static llvm::StringMap<dfiSchemeFType *> schemeMap;
+
+  static BBDefMap gens;
+  static BBDefMap kills;
+  static BBDefMap out;
+  static BBDefMap in;
+  static VarDefMap allDefs;
 };
 //------------------------------------------------------------------------------
 // Legacy PM interface

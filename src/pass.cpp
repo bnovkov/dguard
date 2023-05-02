@@ -71,6 +71,8 @@ bool DGuard::runOnModule(Module &M) {
     instrumentIsolatedVars(instF);
   }
 
+  // M.dump();
+
   return changed;
 }
 
@@ -216,6 +218,10 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
             }
           }
         }
+      } else if (SwitchInst *si = dyn_cast<SwitchInst>(term)) {
+        if (si->getDefaultDest() == old) {
+          si->setDefaultDest(pred);
+        }
       }
     }
 
@@ -345,18 +351,13 @@ BasicBlock *DGuard::createAbortCallBB(llvm::Module *m, Function *F) {
   return BB;
 }
 
-using DefSet = SmallPtrSet<StoreInst *, 10>;
-using BBDefMap = DenseMap<const BasicBlock *, DefSet>;
-using VarDefMap = DenseMap<const Value *, DefSet>;
-using Worklist = SmallVector<const BasicBlock *, 10>;
-
 /*
  * Runs Reaching Definitions Analysis for protected variables and calculates
  * the RDS.
  */
 void DGuard::calculateRDS(void) {
 
-  SmallVector<Function *, 5> funcs;
+  SmallVector<Function *, 24> funcs;
 
   /* Collect each function where the protected var has users */
   for (auto &g : isolatedVars) {
@@ -369,12 +370,10 @@ void DGuard::calculateRDS(void) {
   }
 
   for (Function *f : funcs) {
-    BBDefMap gens;
-    BBDefMap kills;
-    BBDefMap out;
-    BBDefMap in;
-    VarDefMap allDefs;
-
+    gens.clear();
+    kills.clear();
+    out.clear();
+    in.clear();
     /* Collect all defs for variables in f */
     for (Value *isolVar : isolatedVars) {
       allDefs.insert(std::make_pair(isolVar, DefSet()));
@@ -633,6 +632,8 @@ llvm::PassPluginLibraryInfo getDGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dguard-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
             PB.registerOptimizerLastEPCallback(
+                // PB.registerPipelineEarlySimplificationEPCallback(
+
                 [&](ModulePassManager &MPM, auto) {
                   MPM.addPass(DGuard());
                   return true;
@@ -674,3 +675,9 @@ llvm::StringMap<dfiSchemeFType *> DGuard::schemeMap = {
 
 llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> DGuard::loadToStoreMap{};
 llvm::DenseMap<llvm::StoreInst *, SmallPtrSet<LoadInst *, 10>> DGuard::rds{};
+
+BBDefMap DGuard::gens{};
+BBDefMap DGuard::kills{};
+BBDefMap DGuard::out{};
+BBDefMap DGuard::in{};
+VarDefMap DGuard::allDefs{};
