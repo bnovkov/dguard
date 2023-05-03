@@ -73,7 +73,7 @@ bool DGuard::runOnModule(Module &M) {
     instrumentIsolatedVars(instF);
   }
 
-  // dump();
+  // M.dump();
 
   return changed;
 }
@@ -208,6 +208,7 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
       /* SplitBlock failed to link all predecessors; do this manually */
       Instruction *term = &bb->back();
 
+      /* Modify successors in predecessor terminators */
       if (BranchInst *bi = dyn_cast<BranchInst>(term)) {
         if (bi->isUnconditional()) {
           bi->setOperand(0, pred);
@@ -233,6 +234,12 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
             Case.setSuccessor(pred);
           }
         }
+      } else if (InvokeInst *ii = dyn_cast<InvokeInst>(term)) {
+        if (ii->getNormalDest() == old) {
+          ii->setNormalDest(pred);
+        }
+      } else {
+        assert(0 && "Unsupported terminator inst type");
       }
     }
 
