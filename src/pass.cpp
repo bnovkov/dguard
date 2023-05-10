@@ -44,12 +44,19 @@ static cl::opt<std::string> scheme("scheme", cl::init("hamming"),
                                    cl::desc("The desired DFI scheme"),
                                    cl::value_desc("DFI scheme"));
 
+DGuard::DGuard() {
+  schemeMap["dfi"] = &DGuard::dfiInst;
+  schemeMap["manhattan"] = &DGuard::manhInst;
+  schemeMap["hamming"] = &DGuard::primeInst;
+  schemeMap["prime"] = &DGuard::hammingInst;
+};
+
 /*
  * Runs all defined static analysis plugins on a module.
  */
 bool DGuard::runOnModule(Module &M) {
   bool changed = false;
-  dfiSchemeFType *instF;
+  dfiSchemeFType instF;
 
   if (schemeMap.count(scheme)) {
     instF = schemeMap[scheme];
@@ -60,7 +67,7 @@ bool DGuard::runOnModule(Module &M) {
 
   for (auto it = DGuard::pluginMap.begin(); it != DGuard::pluginMap.end();
        it++) {
-    bool passChanged = it->second(M);
+    bool passChanged = it->second(M, this);
     changed = changed || passChanged;
 
     dbgs() << "pass " << it->first() << " returned " << passChanged << "\n";
@@ -277,7 +284,7 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
 
     if (rds[si].size() > 1) {
       /* Instrument according to selected DFI scheme */
-      instF(builder, lastLabel, i, old, abortBB);
+      (this->*instF)(builder, lastLabel, i, old, abortBB);
     } else {
       Value *equal = builder.CreateICmpEQ(
           dyn_cast<Value>(ConstantInt::get(DGuard::labelMetadataType, 0)),
@@ -375,7 +382,7 @@ BasicBlock *DGuard::createAbortCallBB(llvm::Module *m, Function *F) {
  */
 void DGuard::calculateRDS(void) {
 
-  SmallSet<Function *, 24> funcs;
+  SmallSet<Function *, 24> funcs{};
 
   /* Collect each function where the protected var has users */
   for (auto &g : isolatedVars) {
@@ -525,10 +532,11 @@ long long DGuard::getThreshold(Instruction *loadI) {
 }
 
 bool DGuard::addPassPlugin(std::string name,
-                           std::function<bool(llvm::Module &)> func) {
+                           std::function<bool(llvm::Module &, DGuard *)> func) {
   return DGuard::pluginMap
-      .insert(std::pair<std::string, std::function<bool(llvm::Module &)>>(name,
-                                                                          func))
+      .insert(
+          std::pair<std::string, std::function<bool(llvm::Module &, DGuard *)>>(
+              name, func))
       .second;
 }
 
@@ -537,9 +545,9 @@ bool DGuard::addPassPlugin(std::string name,
  * accordingly.
  */
 void DGuard::instrumentIsolatedVars(dfiSchemeFType instF) {
+  dbgs() << "RDS size: " << rds.size() << "\n";
   for (auto &it : rds) {
     insertDFIInst(it.first, instF);
-
     for (LoadInst *li : it.second) {
       insertDFIInst(li, instF);
     }
@@ -675,29 +683,3 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
   return getDGuardPluginInfo();
 }
-
-/*
- * Private class data initialization.
- */
-llvm::StringMap<std::function<bool(llvm::Module &)>> DGuard::pluginMap = {};
-std::vector<llvm::Value *> DGuard::isolatedVars = {};
-int DGuard::allocaId = 0;
-const std::string DGuard::labelArrName = "__dguard_label_arr";
-llvm::Type *DGuard::labelMetadataType = nullptr;
-llvm::ValueMap<llvm::Value *, long long> DGuard::labelStore{};
-
-llvm::StringMap<dfiSchemeFType *> DGuard::schemeMap = {
-    {"dfi", dfiInst},
-    {"hamming", hammingInst},
-    {"prime", primeInst},
-    {"manhattan", manhInst},
-};
-
-llvm::DenseMap<llvm::LoadInst *, llvm::StoreInst *> DGuard::loadToStoreMap{};
-llvm::DenseMap<llvm::StoreInst *, SmallPtrSet<LoadInst *, 10>> DGuard::rds{};
-
-BBDefMap DGuard::gens{};
-BBDefMap DGuard::kills{};
-BBDefMap DGuard::out{};
-BBDefMap DGuard::in{};
-VarDefMap DGuard::allDefs{};

@@ -26,7 +26,7 @@ private:
   static StringSet<> funcnameSet;
 
 public:
-  static bool runOnModule(llvm::Module &M) {
+  static bool runOnModule(llvm::Module &M, DGuard *dguard) {
     bool changed = false;
     ValueVec varsToBeIsolated;
 
@@ -53,7 +53,7 @@ public:
     dbgs() << "Isolated " << varsToBeIsolated.size() << " variables in total\n";
 
     if (varsToBeIsolated.size() != 0) {
-      DGuard::addIsolatedVars(M, &varsToBeIsolated);
+      dguard->addIsolatedVars(M, &varsToBeIsolated);
       changed = true;
     }
 
