@@ -3,6 +3,8 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -25,12 +27,15 @@
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/MemorySSA.h"
 
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <ios>
+#include <memory>
 #include <sstream>
 #include <utility>
 using namespace llvm;
@@ -381,7 +386,6 @@ BasicBlock *DGuard::createAbortCallBB(llvm::Module *m, Function *F) {
  * the RDS.
  */
 void DGuard::calculateRDS(void) {
-
   SmallSet<Function *, 24> funcs{};
 
   /* Collect each function where the protected var has users */
@@ -408,6 +412,12 @@ void DGuard::calculateRDS(void) {
         if (StoreInst *si = dyn_cast<StoreInst>(*it)) {
           if (si->getFunction() == f) {
             allDefs[isolVar].insert(si);
+          }
+        } else if (GetElementPtrInst *gi = dyn_cast<GetElementPtrInst>(*it)) {
+          for (auto u : gi->users()) {
+            if (StoreInst *si = dyn_cast<StoreInst>(u)) {
+              allDefs[isolVar].insert(si);
+            }
           }
         }
       }
@@ -480,6 +490,13 @@ void DGuard::calculateRDS(void) {
               if (li->getPointerOperand() == g) {
                 rds[def].insert(li);
                 loadToStoreMap[li] = def;
+              }
+            } else if (GetElementPtrInst *gi = dyn_cast<GetElementPtrInst>(i)) {
+              for (auto u : gi->users()) {
+                if (LoadInst *li = dyn_cast<LoadInst>(u)) {
+                  rds[def].insert(li);
+                  loadToStoreMap[li] = def;
+                }
               }
             }
           }
@@ -660,7 +677,7 @@ llvm::PassPluginLibraryInfo getDGuardPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "dguard-pass", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
             PB.registerOptimizerLastEPCallback(
-                // PB.registerPipelineEarlySimplificationEPCallback(
+                // PB.registerPipelineStartEPCallback(
 
                 [&](ModulePassManager &MPM, auto) {
                   MPM.addPass(DGuard());
@@ -683,3 +700,6 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
   return getDGuardPluginInfo();
 }
+
+llvm::StringMap<std::function<bool(llvm::Module &, DGuard *)>>
+    DGuard::pluginMap = {};

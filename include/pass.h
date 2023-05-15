@@ -35,7 +35,7 @@ public:
   llvm::PreservedAnalyses run(llvm::Module &M, llvm::ModuleAnalysisManager &);
   bool runOnModule(llvm::Module &M);
   DGuard();
-  DGuard(DGuard &&);
+  DGuard(DGuard &&d) : schemeMap(d.schemeMap){};
   static bool isRequired() { return true; }
   /*
    * Adds a static analysis/transformation pass function to the plugin map.
