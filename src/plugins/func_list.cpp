@@ -26,9 +26,9 @@ private:
   static StringSet<> funcnameSet;
 
 public:
-  static bool runOnModule(llvm::Module &M) {
+  static bool runOnModule(llvm::Module &M, DGuard *dguard) {
     bool changed = false;
-    AllocaVec allocasToBePromoted;
+    ValueVec allocasToBePromoted;
 
     for (auto &Func : M) {
       std::string fnameDemangled = llvm::demangle(Func.getName().str());
@@ -54,12 +54,17 @@ public:
           }
         }
       }
+
+      for (auto it = M.global_begin(); it != M.global_end(); it++) {
+        allocasToBePromoted.push_back(&*it);
+      }
+
       dbgs() << "Promoted " << allocasToBePromoted.size()
              << " allocas in function " << fnameDemangled << "\n";
     }
 
     if (allocasToBePromoted.size() != 0) {
-      DGuard::promoteToThreadLocal(M, &allocasToBePromoted);
+      dguard->addIsolatedVars(M, &allocasToBePromoted);
       changed = true;
     }
 
@@ -67,19 +72,6 @@ public:
   }
 };
 
-StringSet<> FuncListPlugin::funcnameSet{
-    "BlkSchlsEqEuroNoDiv",          /* blackscholes */
-    "ComputeForcesMT",              /* fluidanimate */
-    "pgain",                        /* streamcluster */
-    "HJM_SimPath_Forward_Blocking", /* swaptions */
-    "walksub",                      /* splash2x.barnes */
-    "ModifyTwoBySupernodeB",        /* splash2x.cholesky */
-    "FFT1DOnce",                    /* splash2x.fft */
-    "lu",                           /* splash2x.lu_* */
-    "relax",                        /* splash2x.ocean_cp */
-    "subdivide_element",            /* splash2x.radiosity */
-    "init",                         /* splash2x.radix */
-    "CSHIFT",                       /* splash2x.water_* */
-};
+StringSet<> FuncListPlugin::funcnameSet{"bubble_sort"};
 
-// REGISTER_PASS_PLUGIN(funclist, FuncListPlugin::runOnModule);
+REGISTER_PASS_PLUGIN(funclist, FuncListPlugin::runOnModule);

@@ -52,8 +52,8 @@ static cl::opt<std::string> scheme("scheme", cl::init("hamming"),
 DGuard::DGuard() {
   schemeMap["dfi"] = &DGuard::dfiInst;
   schemeMap["manhattan"] = &DGuard::manhInst;
-  schemeMap["hamming"] = &DGuard::primeInst;
-  schemeMap["prime"] = &DGuard::hammingInst;
+  schemeMap["prime"] = &DGuard::primeInst;
+  schemeMap["hamming"] = &DGuard::hammingInst;
 };
 
 /*
@@ -176,13 +176,13 @@ void DGuard::addIsolatedVars(llvm::Module &m, ValueVec *vvp) {
 void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
   Instruction *i, *predTerm;
   BasicBlock *old, *pred;
-  // Value *loadStoreTargetPtr;
+  Value *loadStoreTargetPtr;
   BasicBlock *abortBB;
 
   i = dyn_cast<llvm::Instruction>(u);
 
   Module *m = i->getModule();
-  // LLVMContext &C = u->getContext();
+  LLVMContext &C = u->getContext();
   Value *metadataArray = m->getGlobalVariable(DGuard::labelArrName);
 
   /* Fetch 'rdfsbase64' */
@@ -195,6 +195,10 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     SmallPtrSet<BasicBlock *, 10> newPreds = {};
 
     old = i->getParent();
+    if (old->getSinglePredecessor() == nullptr && instF == &DGuard::dfiInst) {
+      return;
+    }
+    loadStoreTargetPtr = dyn_cast<LoadInst>(i)->getPointerOperand();
     StringRef oldBlockName = old->getName();
 
     for (auto it = pred_begin(old), et = pred_end(old); it != et; ++it) {
@@ -250,8 +254,11 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
         if (ii->getNormalDest() == old) {
           ii->setNormalDest(pred);
         }
+        if (ii->getUnwindDest() == old) {
+          ii->setUnwindDest(pred);
+        }
       } else {
-        assert(0 && "Unsupported terminator inst type");
+        assert(false && "Unsupported terminator inst type");
       }
     }
 
@@ -268,20 +275,19 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     // Value *TLSPtrInt = builder.CreatePtrToInt(dyn_cast<Value>(rdFSInst),
     //                                          IntegerType::getInt64Ty(C));
     /* Fetch target address */
-    // Value *targetPtrInt =
-    //  builder.CreatePtrToInt(loadStoreTargetPtr,
-    //  IntegerType::getInt64Ty(C));
-
+    Value *targetPtrInt =
+        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C));
+    Value *idx = builder.CreateLShr(targetPtrInt,
+                                    ConstantInt::get(labelMetadataType, 65));
     /* Index into label array */
     Value *metadataPtr = builder.CreateGEP(
         metadataArray->getType()->getScalarType()->getPointerElementType(),
         metadataArray,
-        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType),
-                           ConstantInt::get(labelMetadataType, 0)}));
+        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType), idx}));
 
     /* Fetch last label */
     Value *lastLabel =
-        builder.CreateLoad(DGuard::labelMetadataType, metadataPtr);
+        builder.CreateLoad(DGuard::labelMetadataType, metadataPtr, false, "");
 
     assert(loadToStoreMap.count(dyn_cast<LoadInst>(i)) > 0);
     StoreInst *si = loadToStoreMap[dyn_cast<LoadInst>(i)];
@@ -300,6 +306,7 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
 
     pred->getTerminator()->eraseFromParent();
   } else if (isa<llvm::StoreInst>(i)) {
+    loadStoreTargetPtr = dyn_cast<StoreInst>(i)->getPointerOperand();
 
     IRBuilder<> builder(i->getParent());
     builder.SetInsertPoint(i);
@@ -315,11 +322,14 @@ void DGuard::insertDFIInst(User *u, dfiSchemeFType instF) {
     //   IntegerType::getInt64Ty(C)));
 
     /* Index into label array */
+    Value *targetPtrInt =
+        builder.CreatePtrToInt(loadStoreTargetPtr, IntegerType::getInt64Ty(C));
+    Value *idx = builder.CreateLShr(targetPtrInt,
+                                    ConstantInt::get(labelMetadataType, 65));
     Value *metadataPtr = builder.CreateGEP(
         metadataArray->getType()->getScalarType()->getPointerElementType(),
         metadataArray,
-        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType),
-                           ConstantInt::get(labelMetadataType, 0)}));
+        ArrayRef<Value *>({Constant::getNullValue(labelMetadataType), idx}));
 
     /* Store current label */
     // TODO: fetch labels from static store
@@ -639,9 +649,15 @@ void DGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
   numblocks = rds[si].size();
 
   blocks.push_back(pred);
+
   for (int j = 0; j < (numblocks - 1); j++) {
-    blocks.push_back(BasicBlock::Create(i->getParent()->getContext(), "",
-                                        i->getFunction(), nullptr));
+    BasicBlock *BB = BasicBlock::Create(i->getParent()->getContext(), "",
+                                        i->getFunction(), nullptr);
+    if (BB == nullptr) {
+      /* Bail */
+      return;
+    }
+    blocks.push_back(BB);
   }
 
   /* Link each block in the compare-branch chain, starting from the last to
@@ -649,10 +665,12 @@ void DGuard::dfiInst(IRBuilder<> &builder, Value *lastLabel, Instruction *i,
   BasicBlock *falseTgt = abortBB;
   for (int j = 0; j < numblocks; j++) {
     BasicBlock *bb = blocks.back();
+    assert(bb != nullptr);
     IRBuilder<> curBuilder(bb);
 
-    if (bb->size() != 0)
+    if (!bb->empty()) {
       curBuilder.SetInsertPoint(&bb->back());
+    }
 
     Value *equal = curBuilder.CreateICmpEQ(
         lastLabel, ConstantInt::get(DGuard::labelMetadataType, j));
